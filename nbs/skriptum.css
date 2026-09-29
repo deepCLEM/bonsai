@@ -15,11 +15,11 @@
 $primary-color: #ffffff;//#fffbf2;   // soft cream
 $primary-color-shade: #f7f6f5; //#faf7f2; // subtle contrast
 
-$highlight-color: #800000; // color highlights
-$highlight-color-shade: #DFB2B2; // hover color for buttons
+$highlight-color: #099D99; //#800000; // color highlights
+$highlight-color-shade: #84CECC; //#DFB2B2; // hover color for buttons
 
 $dark: #3a3a3a;;  // mostly used for borders
-$font-color: #1b1b1b; // self explanatory 
+$font-color: #1b1b1b; 
 
 $font-family-headings: 'Josefin Sans', sans-serif;
 $font-family-text: 'Josefin Sans', sans-serif;
