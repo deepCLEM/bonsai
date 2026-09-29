@@ -5,7 +5,7 @@
 # %% auto #0
 __all__ = ['OPTIMIZER_BACKENDS', 'OptimWrapper', 'register_optimizer_backend', 'OptimizerBackend', 'TorchOptimizerBackend',
            'FastaiOptimizerBackend', 'MonaiOptimizerBackend', 'IgniteOptimizerBackend', 'KerasOptimizerBackend',
-           'BioOptimizer', 'Adadelta', 'Adafactor', 'Adagrad', 'Adam', 'AdamW', 'Adamax', 'ASGD', 'LBFGS', 'NAdam',
+           'BioOptimizer', 'Adam', 'Adadelta', 'Adafactor', 'Adagrad', 'AdamW', 'Adamax', 'ASGD', 'LBFGS', 'NAdam',
            'RAdam', 'RMSprop', 'Rprop', 'SGD', 'SparseAdam']
 
 # %% ../nbs/070_optimizers.ipynb #e46d9793
@@ -332,6 +332,54 @@ class BioOptimizer:
             **kwargs,
         )
 
+# %% ../nbs/070_optimizers.ipynb #5e151456
+class Adam(BioOptimizer):
+    """
+    Adaptive Moment Estimation optimizer.
+
+    Adam maintains exponentially decaying estimates of both the first
+    and second moments of the gradient:
+
+    ``m_t = beta1 * m_{t-1} + (1 - beta1) * g_t``
+
+    ``v_t = beta2 * v_{t-1} + (1 - beta2) * g_t²``.
+
+    Bias-corrected estimates are used to compute the update:
+
+    ``m̂_t = m_t / (1 - beta1^t)``
+
+    ``v̂_t = v_t / (1 - beta2^t)``
+
+    ``θ_t = θ_{t-1} - lr * m̂_t / (sqrt(v̂_t) + eps)``.
+
+    Parameters
+    ----------
+    lr : float, default=1e-3
+        Learning rate.
+    betas : tuple of float, default=(0.9, 0.999)
+        Decay rates for the first and second moment estimates.
+    eps : float, default=1e-8
+        Numerical-stability constant added to the denominator.
+    weight_decay : float, default=0
+        Weight-decay coefficient. For decoupled weight decay, use
+        ``AdamW``.
+    amsgrad : bool, default=False
+        If ``True``, maintains the maximum historical second-moment
+        estimate as in AMSGrad.
+    foreach : bool or None, default=None
+        Whether to use the multi-tensor implementation when available.
+    maximize : bool, default=False
+        If ``True``, performs gradient ascent.
+    capturable : bool, default=False
+        Enables graph-capturable optimizer state where supported.
+    differentiable : bool, default=False
+        If ``True``, records optimizer operations in the autograd graph.
+    fused : bool or None, default=None
+        Whether to use the fused implementation when supported by the
+        selected device and dtype.
+    """
+    _default = toptim.Adam
+
 # %% ../nbs/070_optimizers.ipynb #ab236576
 class Adadelta(BioOptimizer):
     """
@@ -468,54 +516,6 @@ class Adagrad(BioOptimizer):
         If ``True``, records optimizer operations in the autograd graph.
     """
     _default = toptim.Adagrad
-
-
-class Adam(BioOptimizer):
-    """
-    Adaptive Moment Estimation optimizer.
-
-    Adam maintains exponentially decaying estimates of both the first
-    and second moments of the gradient:
-
-    ``m_t = beta1 * m_{t-1} + (1 - beta1) * g_t``
-
-    ``v_t = beta2 * v_{t-1} + (1 - beta2) * g_t²``.
-
-    Bias-corrected estimates are used to compute the update:
-
-    ``m̂_t = m_t / (1 - beta1^t)``
-
-    ``v̂_t = v_t / (1 - beta2^t)``
-
-    ``θ_t = θ_{t-1} - lr * m̂_t / (sqrt(v̂_t) + eps)``.
-
-    Parameters
-    ----------
-    lr : float, default=1e-3
-        Learning rate.
-    betas : tuple of float, default=(0.9, 0.999)
-        Decay rates for the first and second moment estimates.
-    eps : float, default=1e-8
-        Numerical-stability constant added to the denominator.
-    weight_decay : float, default=0
-        Weight-decay coefficient. For decoupled weight decay, use
-        ``AdamW``.
-    amsgrad : bool, default=False
-        If ``True``, maintains the maximum historical second-moment
-        estimate as in AMSGrad.
-    foreach : bool or None, default=None
-        Whether to use the multi-tensor implementation when available.
-    maximize : bool, default=False
-        If ``True``, performs gradient ascent.
-    capturable : bool, default=False
-        Enables graph-capturable optimizer state where supported.
-    differentiable : bool, default=False
-        If ``True``, records optimizer operations in the autograd graph.
-    fused : bool or None, default=None
-        Whether to use the fused implementation when supported by the
-        selected device and dtype.
-    """
-    _default = toptim.Adam
 
 
 class AdamW(BioOptimizer):

@@ -57,8 +57,8 @@ from fastai.data.all import (
 from fastai.optimizer import OptimWrapper, Optimizer
 
 from fastai.vision.all import (
-    Any, BypassNewMeta, CSVLogger, ClassificationInterpretation,
-    DataBlock, DisplayedTransform, Learner, ShowGraphCallback,
+    Any, BypassNewMeta, ClassificationInterpretation,
+    DataBlock, DisplayedTransform, Learner, 
     create_vision_model, create_timm_model, default_split,
     get_c, ifnone, minimum, model_meta, slide, steep, store_attr, valley
 )
@@ -75,6 +75,7 @@ from .backend import get_backend
 from .utils import *
 from .datasets import download_medmnist
 from .optimizers import Adam
+from .callbacks import CSVLogger, ShowGraphCallback
 
 # %% auto #0
 __all__ = ['TrainerFactory', 'BACKEND_REGISTRY', 'TRAINER_REGISTRY', 'register_backend', 'register_trainer', 'TrainerConfig',
@@ -657,6 +658,10 @@ class TrainerBackend:
     Framework-specific concepts should remain inside the backend. For
     example, MONAI/Ignite events should not become part of the public
     ``BioTrainer`` API.
+
+    The native trainer is constructed eagerly during backend initialization.
+    This ensures that ``trainer``, ``validate``, ``predict``, and other
+    lifecycle methods can operate on an already-configured native trainer.
     """
 
     arg_map: Mapping[str, str] = {}
@@ -664,8 +669,30 @@ class TrainerBackend:
 
     def __init__(self, config: TrainerConfig):
         self.config = config
-        self.trainer = None
-        self.evaluator = None
+        self.trainer = self._build_trainer()
+        self.evaluator = None   
+
+    def _build_trainer(self):
+        """
+        Construct and store the native framework trainer.
+
+        Backend subclasses must implement this method.
+
+        Returns
+        -------
+        Any
+            The constructed native trainer.
+
+        Notes
+        -----
+        Construction is intentionally eager. Backend-specific constructor
+        options such as ``show_summary`` therefore take effect when the
+        :class:`TrainerBackend` is created, rather than when ``fit()`` is
+        first called.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement `_build_trainer()`."
+        )
 
     @property
     def recorder(self):
@@ -1093,8 +1120,8 @@ def fastai_build_trainer(self):
 
     Returns
     -------
-    FastaiTrainerBackend
-        The backend instance with ``self.trainer`` initialized.
+    Any
+        The constructed native FastAI trainer.
     """
     trainer_factory = self._get_trainer()
 
@@ -1109,8 +1136,7 @@ def fastai_build_trainer(self):
         )
     )
 
-    self.trainer = trainer_factory(**kwargs)
-    return self
+    return trainer_factory(**kwargs)
 
 # %% ../nbs/080_engines.ipynb #8ef75e4a
 def fastai_fit(
@@ -1150,9 +1176,6 @@ def fastai_fit(
     Any
         Result returned by ``fastTrainer.fit``.
     """
-    if self.trainer is None:
-        self._build_trainer()
-
     cfg = self.config
 
     if n_epoch is None:
@@ -1186,9 +1209,6 @@ def fastai_validate(self):
     Any
         Validation result.
     """
-    if self.trainer is None:
-        self._build_trainer()
-
     if hasattr(self.trainer, "validate"):
         return self.trainer.validate()
 
@@ -1218,9 +1238,6 @@ def fastai_predict(self, *args, **kwargs):
     Any
         Prediction result returned by the trainer.
     """
-    if self.trainer is None:
-        self._build_trainer()
-
     if not hasattr(self.trainer, "predict"):
         raise RuntimeError(
             f"Trainer {type(self.trainer).__name__!r} does not provide "
@@ -1608,9 +1625,7 @@ class MonaiTrainerBackend(TrainerBackend):
             )
         )
 
-        self.trainer = SupervisedTrainer(**kwargs)
-
-        return self.trainer
+        return SupervisedTrainer(**kwargs)
 
     def _build_evaluator(self):
         """
@@ -1702,8 +1717,6 @@ class MonaiTrainerBackend(TrainerBackend):
         MonaiTrainerBackend
             This backend instance.
         """
-        self._build_trainer()
-
         if self.config.validate:
             self._build_evaluator()
             self._attach_validation()
