@@ -19,7 +19,6 @@ keywords = [
     "artificial intelligence",
     "MONAI",
     "fastai",
-    "nbdev",
 ]
 
 classifiers = [
