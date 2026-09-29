@@ -2,130 +2,118 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://deepCLEM.github.io/bonsai/utils.html</loc>
-    <lastmod>2026-09-29T13:56:16.603Z</lastmod>
+    <lastmod>2026-09-29T15:13:02.673Z</lastmod>
   </url>
   <url>
     <loc>https://deepCLEM.github.io/bonsai/data.core.html</loc>
-    <lastmod>2026-09-29T13:56:17.795Z</lastmod>
+    <lastmod>2026-09-29T15:13:03.820Z</lastmod>
   </url>
   <url>
     <loc>https://deepCLEM.github.io/bonsai/io.html</loc>
-    <lastmod>2026-09-29T13:56:17.658Z</lastmod>
+    <lastmod>2026-09-29T15:13:03.738Z</lastmod>
   </url>
   <url>
     <loc>https://deepCLEM.github.io/bonsai/Tutorials/tutorial_segmentation3d.html</loc>
-    <lastmod>2026-09-29T13:56:11.594Z</lastmod>
+    <lastmod>2026-09-29T15:12:57.142Z</lastmod>
   </url>
   <url>
     <loc>https://deepCLEM.github.io/bonsai/Tutorials/tutorial_denoising.html</loc>
-    <lastmod>2026-09-29T13:56:11.674Z</lastmod>
+    <lastmod>2026-09-29T15:12:57.139Z</lastmod>
   </url>
   <url>
     <loc>https://deepCLEM.github.io/bonsai/optimizers.html</loc>
-    <lastmod>2026-09-29T13:56:16.562Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/Benchmarks/monai_101_biomonai.html</loc>
-    <lastmod>2026-09-29T13:56:11.502Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/Benchmarks/image_restoration_bonsai.html</loc>
-    <lastmod>2026-09-29T13:59:10.419Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/Benchmarks/monai_101_bonsai.html</loc>
-    <lastmod>2026-09-29T13:59:10.404Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/Benchmarks/monai_101_ignite.html</loc>
-    <lastmod>2026-09-29T13:56:11.471Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/Benchmarks/mednist_tutorial_pytorch.html</loc>
-    <lastmod>2026-09-29T13:56:11.475Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/visualize.html</loc>
-    <lastmod>2026-09-29T13:56:17.142Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/inference.html</loc>
-    <lastmod>2026-09-29T13:56:16.864Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/losses.html</loc>
-    <lastmod>2026-09-29T13:56:16.631Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/data.tfms.html</loc>
-    <lastmod>2026-09-29T13:56:17.992Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/nets.html</loc>
-    <lastmod>2026-09-29T13:56:16.756Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/engines.html</loc>
-    <lastmod>2026-09-29T13:56:17.923Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/callbacks.html</loc>
-    <lastmod>2026-09-29T13:56:17.009Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/backend.html</loc>
-    <lastmod>2026-09-29T13:56:11.213Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/metrics.html</loc>
-    <lastmod>2026-09-29T13:56:16.779Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/index.html</loc>
-    <lastmod>2026-09-29T13:56:11.479Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/data.load.html</loc>
-    <lastmod>2026-09-29T13:56:18.280Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/Benchmarks/multispectral_microscopy_pytorch.html</loc>
-    <lastmod>2026-09-29T13:56:11.598Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/Benchmarks/mednist_tutorial_biomonai.html</loc>
-    <lastmod>2026-09-29T13:56:11.398Z</lastmod>
-  </url>
-  <url>
-    <loc>https://deepCLEM.github.io/bonsai/Benchmarks/image_restoration_biomonai.html</loc>
-    <lastmod>2026-09-29T13:56:11.576Z</lastmod>
+    <lastmod>2026-09-29T15:13:02.483Z</lastmod>
   </url>
   <url>
     <loc>https://deepCLEM.github.io/bonsai/Benchmarks/mednist_tutorial_bonsai.html</loc>
-    <lastmod>2026-09-29T13:59:10.391Z</lastmod>
+    <lastmod>2026-09-29T15:12:57.018Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/Benchmarks/monai_101_bonsai.html</loc>
+    <lastmod>2026-09-29T15:12:57.082Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/Benchmarks/multispectral_microscopy_pytorch.html</loc>
+    <lastmod>2026-09-29T15:12:57.052Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/data.load.html</loc>
+    <lastmod>2026-09-29T15:13:04.219Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/index.html</loc>
+    <lastmod>2026-09-29T15:12:57.006Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/metrics.html</loc>
+    <lastmod>2026-09-29T15:13:02.429Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/backend.html</loc>
+    <lastmod>2026-09-29T15:12:57.007Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/callbacks.html</loc>
+    <lastmod>2026-09-29T15:13:02.937Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/engines.html</loc>
+    <lastmod>2026-09-29T15:13:03.783Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/nets.html</loc>
+    <lastmod>2026-09-29T15:13:02.595Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/data.tfms.html</loc>
+    <lastmod>2026-09-29T15:13:03.936Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/losses.html</loc>
+    <lastmod>2026-09-29T15:13:02.608Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/inference.html</loc>
+    <lastmod>2026-09-29T15:13:02.495Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/visualize.html</loc>
+    <lastmod>2026-09-29T15:13:03.102Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/Benchmarks/mednist_tutorial_pytorch.html</loc>
+    <lastmod>2026-09-29T15:12:56.992Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/Benchmarks/monai_101_ignite.html</loc>
+    <lastmod>2026-09-29T15:12:57.061Z</lastmod>
+  </url>
+  <url>
+    <loc>https://deepCLEM.github.io/bonsai/Benchmarks/image_restoration_bonsai.html</loc>
+    <lastmod>2026-09-29T15:12:57.064Z</lastmod>
   </url>
   <url>
     <loc>https://deepCLEM.github.io/bonsai/Benchmarks/image_restoration_pytorch.html</loc>
-    <lastmod>2026-09-29T13:56:11.515Z</lastmod>
+    <lastmod>2026-09-29T15:12:57.056Z</lastmod>
   </url>
   <url>
     <loc>https://deepCLEM.github.io/bonsai/Tutorials/tutorial_classification3d.html</loc>
-    <lastmod>2026-09-29T13:56:11.533Z</lastmod>
+    <lastmod>2026-09-29T15:12:57.086Z</lastmod>
   </url>
   <url>
     <loc>https://deepCLEM.github.io/bonsai/Tutorials/tutorial_histopathology.html</loc>
-    <lastmod>2026-09-29T13:56:11.644Z</lastmod>
+    <lastmod>2026-09-29T15:12:57.148Z</lastmod>
   </url>
   <url>
     <loc>https://deepCLEM.github.io/bonsai/Tutorials/tutorial_classification.html</loc>
-    <lastmod>2026-09-29T13:56:11.540Z</lastmod>
+    <lastmod>2026-09-29T15:12:56.986Z</lastmod>
   </url>
   <url>
     <loc>https://deepCLEM.github.io/bonsai/datasets.html</loc>
-    <lastmod>2026-09-29T13:56:15.751Z</lastmod>
+    <lastmod>2026-09-29T15:13:01.328Z</lastmod>
   </url>
   <url>
     <loc>https://deepCLEM.github.io/bonsai/transforms.html</loc>
-    <lastmod>2026-09-29T13:56:18.118Z</lastmod>
+    <lastmod>2026-09-29T15:13:04.102Z</lastmod>
   </url>
 </urlset>
