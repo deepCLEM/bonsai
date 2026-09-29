@@ -9,13 +9,48 @@ description = "Biomedical Open Network for Scientific Artificial Intelligence"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
-authors = [{name = "bmandracchia", email = "biagio.mandracchia@gmail.com"}]
-keywords = ['nbdev']
+authors = [
+    {name = "bmandracchia", email = "biagio.mandracchia@gmail.com"}
+]
+keywords = [
+    "biomedical imaging",
+    "deep learning",
+    "microscopy",
+    "artificial intelligence",
+    "MONAI",
+    "fastai",
+    "nbdev",
+]
+
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
 ]
-dependencies = []
+
+dependencies = [
+    "numpy",
+    "pandas",
+    "pyyaml",
+    "scikit-learn",
+    "scikit-image",
+    "torch",
+    "monai",
+    "fastai",
+    "fastcore",
+    "plum-dispatch",
+]
+
+[project.optional-dependencies]
+dev = [
+    "nbdev",
+    "jupyter",
+    "pytest",
+]
+
+docs = [
+    "nbdev",
+    "jupyter",
+]
 
 [project.urls]
 Repository = "https://github.com/deepCLEM/bonsai"
@@ -28,6 +63,7 @@ bonsai = "bonsai._modidx:d"
 version = {attr = "bonsai.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["bonsai"]
+include = ["bonsai*"]
 
 [tool.nbdev]
+custom_sidebar = false
