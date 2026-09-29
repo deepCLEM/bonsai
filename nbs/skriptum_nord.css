@@ -1,45 +1,70 @@
 /*-- scss:defaults --*/
 
+// =============================================================================
 // Fonts
+// =============================================================================
+
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display+SC:ital,wght@0,400;0,700;0,900;1,400;1,700;1,900&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Josefin+Sans:ital,wght@0,100..700;1,100..700&display=swap');
 
-// =========================
-// NORD THEME
-// =========================
 
-// Nord palette
-$nord0: #2E3440;
-$nord1: #3B4252;
-$nord2: #434C5E;
-$nord3: #4C566A;
+// =============================================================================
+// BONSAI dark palette
+// =============================================================================
 
-$nord4: #D8DEE9;
-$nord5: #E5E9F0;
-$nord6: #ECEFF4;
+// Nord-inspired neutral palette
+$nord0: #2e3440;   // main background
+$nord1: #3b4252;   // elevated surfaces
+$nord2: #434c5e;   // code / stronger surfaces
+$nord3: #4c566a;   // borders
 
-$nord8: #88C0D0;
-$nord11: #BF616A;
+$nord4: #d8dee9;   // body text
+$nord5: #e5e9f0;   // brighter text
+$nord6: #eceff4;   // headings / strongest text
 
+
+// BONSAI green
+// Same identity as the light theme
+$bonsai-green: #099d99;
+$bonsai-green-light: #84cecc;
+
+// Dark-theme green variants
+$bonsai-green-bright: #3fc4bf;
+$bonsai-green-muted: #277f7c;
+
+
+// =============================================================================
 // Theme mapping
+// =============================================================================
+
 $primary-color: $nord0;
 $primary-color-shade: $nord1;
 
-$highlight-color: $nord11;
-$highlight-color-shade: $nord3;
+$highlight-color: $bonsai-green-bright;
+$highlight-color-shade: $bonsai-green-muted;
 
 $dark: $nord3;
 $font-color: $nord4;
 
+
+// =============================================================================
 // Typography
+// =============================================================================
+
 $font-family-headings: 'Josefin Sans', sans-serif;
 $font-family-text: 'Josefin Sans', sans-serif;
 $font-family-smallcaps: 'Inter', serif;
 
+
+// =============================================================================
 // Bootstrap overrides
-$link-color: $nord8;
+// =============================================================================
+
+$link-color: $bonsai-green-bright;
+
 $body-bg: $primary-color;
+$body-color: $font-color;
 
 $code-block-bg: $nord2;
 $code-bg: $nord2;
@@ -57,33 +82,51 @@ $footer-fg: $nord4;
 $table-border-width: 0px;
 $table-border-color: $nord3;
 
+$card-border-radius: 20px;
+
+
 /*-- scss:rules --*/
+
+
+// =============================================================================
 // Logo
-.logo-light {
-  display: none;
-}
+// =============================================================================
 
-.logo-dark {
+.logo {
   display: block;
+  margin: 0 auto;
+  border-radius: 20px;
 }
 
+
+// =============================================================================
 // Navbar
+// =============================================================================
+
 .navbar {
+  position: relative;
+  min-height: 80px;
+  margin: 0 5vw;
+  border-bottom: 1px solid $nord3;
+
   font-family: $font-family-text;
   font-weight: 400;
-  position: relative;
-  margin: 0vw 5vw;
-  border-bottom: 1px solid $nord6;
-  min-height: 80px;
+  background-color: $nord0;
 
   .navbar-title {
     font-family: $font-family-headings;
     font-weight: 800;
+    font-style: normal;
     color: $nord6;
   }
 
-  a:hover {
-    text-decoration: underline solid $nord8;
+  a {
+    color: $nord4;
+
+    &:hover {
+      color: $bonsai-green-bright;
+      text-decoration: underline solid $bonsai-green;
+    }
   }
 
   .navbar-brand {
@@ -98,31 +141,53 @@ $table-border-color: $nord3;
 }
 
 .navbar-toggler {
+  border: none;
   box-shadow: none;
+
+  &:focus {
+    box-shadow: none;
+  }
 }
 
+
+// =============================================================================
 // Footer
+// =============================================================================
+
 .footer {
   border-top: 1px solid $nord3;
-  font-family: $font-family-headings;
   background-color: $nord1;
   color: $nord4;
+  font-family: $font-family-headings;
+
+  a {
+    color: $bonsai-green-bright;
+
+    &:hover {
+      color: $bonsai-green-light;
+    }
+  }
 }
 
+
+// =============================================================================
 // Title block
+// =============================================================================
+
 .quarto-title-block {
-  padding-bottom: 2em;
   padding-top: 5vh;
+  padding-bottom: 2em;
   border-bottom: 1px solid $nord3;
 }
 
 .quarto-title-meta-heading {
   font-family: $font-family-headings;
-  color: $nord11;
+  color: $bonsai-green-bright;
 }
 
 .quarto-title-meta-contents {
   font-family: $font-family-headings;
+  color: $nord4;
 }
 
 header:empty {
@@ -130,7 +195,11 @@ header:empty {
   padding: 0 !important;
 }
 
-// Banner
+
+// =============================================================================
+// Full-width title banner
+// =============================================================================
+
 .quarto-title-banner.page-full {
   background-color: $nord1;
   color: $nord6;
@@ -138,29 +207,45 @@ header:empty {
 
 #title-block-header.page-full {
   margin-block-start: 3em;
-  background-color: $nord1;
   border-bottom: 0;
+  background-color: $nord1;
   color: $nord6;
 
   h1 {
     color: $nord6;
   }
+
+  .subtitle {
+    color: $nord4;
+  }
 }
 
-// TOC
+
+// =============================================================================
+// Table of contents
+// =============================================================================
+
 nav#TOC {
-  background-color: $nord1;
-  padding: 0.5em 1em;
+  padding: 0.7em 1em;
   margin-bottom: 1em;
 
+  background-color: $nord1;
+  border-radius: 8px;
+
   #toc-title {
-    font-size: 1em;
+    margin: 0;
     font-family: $font-family-headings;
+    font-size: 1em;
+    color: $nord6;
   }
 
   li a {
     font-family: $font-family-headings;
     color: $nord4;
+
+    &:hover {
+      color: $bonsai-green-bright;
+    }
   }
 }
 
@@ -168,74 +253,247 @@ nav.toc-active#TOC {
   background-color: $nord2;
 }
 
+nav:not(.toc-active)#TOC {
+  li::marker {
+    color: $bonsai-green;
+    content: "→ ";
+  }
+}
+
+
+// =============================================================================
 // Listings
+// =============================================================================
+
 .quarto-post {
-  border-bottom: 1px solid $nord3 !important;
   padding-bottom: 1em;
+  border-bottom: 1px solid $nord3 !important;
 
   .listing-title {
     font-family: $font-family-headings;
     font-size: 1.5rem;
-    color: $nord11 !important;
+    color: $bonsai-green-bright !important;
+
+    &:hover {
+      color: $bonsai-green-light !important;
+    }
   }
 
   .listing-date {
     font-family: $font-family-text;
-    color: $nord8;
+    color: $bonsai-green-light;
   }
 
   .listing-author {
     font-family: $font-family-text;
+    color: $nord4;
   }
 }
+
+
+// =============================================================================
+// Cards
+// =============================================================================
 
 .card {
   background-color: $nord1;
-  border-radius: 5px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: $nord4;
 
   .listing-date {
     font-family: $font-family-headings;
-    color: $nord8;
+    color: $bonsai-green-light;
+  }
+
+  .listing-title {
+    color: $nord6;
+  }
+
+  &:hover {
+    border-color: $bonsai-green-muted;
   }
 }
 
-// General
+.listing-description {
+  color: $nord4;
+}
+
+
+// =============================================================================
+// General typography
+// =============================================================================
+
 body {
+  background-color: $nord0;
+  color: $font-color;
+
   font-family: $font-family-text;
   font-weight: 320;
   line-height: 1.3em;
   font-size: 1rem;
-  color: $font-color;
 }
 
-h1,h2,h3,h4,h5,h6 {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
   font-family: $font-family-headings;
   font-weight: 500;
   color: $nord6;
+  border-bottom: 0 !important;
 }
 
-// Code
-pre {
-  background-color: $nord2;
-  padding: 1em;
-  border-radius: 5px;
-  font-family: 'Courier New', monospace;
+h1,
+h2 {
+  color: $nord6;
 }
 
-// Buttons
-button {
-  border: 1px solid $nord8;
-  border-radius: 4px;
-  color: $nord8;
-  background-color: transparent;
-  box-shadow: 3px 3px $nord8;
+h3,
+h4,
+h5,
+h6 {
+  color: $nord5;
+}
+
+a {
+  color: $bonsai-green-bright;
+  font-weight: 300;
 
   &:hover {
-    background-color: $nord3;
+    color: $bonsai-green-light;
   }
 }
 
+
+// =============================================================================
+// Code
+// =============================================================================
+
+pre,
+div.sourceCode {
+  background-color: $nord2;
+  color: $nord5;
+  border: 1px solid $nord3;
+  border-radius: $card-border-radius;
+}
+
+pre {
+  padding: 1em;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+pre.sourceCode {
+  padding: 0.7em;
+  border: 1px solid $nord3;
+  font-size: 0.875em;
+  overflow-y: visible !important;
+}
+
+code {
+  color: $nord5;
+}
+
+
+// -----------------------------------------------------------------------------
+// Syntax highlighting
+// -----------------------------------------------------------------------------
+
+pre code span {
+
+  // Comments
+  &.co,
+  &.ch {
+    color: #a7b0bd;
+    font-style: italic;
+  }
+
+  // Keywords
+  &.kw,
+  &.cf {
+    color: $bonsai-green-bright;
+    font-weight: 600;
+  }
+
+  // Functions
+  &.fu {
+    color: $bonsai-green-light;
+    font-weight: 500;
+  }
+
+  // Types and built-ins
+  &.dt,
+  &.bu {
+    color: #c6a0d8;
+  }
+
+  // Numbers
+  &.dv,
+  &.bn,
+  &.fl {
+    color: #e0a477;
+  }
+
+  // Strings
+  &.st,
+  &.vs {
+    color: #b8d9b0;
+  }
+
+  // Operators
+  &.op {
+    color: $nord5;
+  }
+
+  // Attributes
+  &.at {
+    color: #e0b878;
+  }
+
+  // Imports
+  &.im {
+    color: $bonsai-green-bright;
+    font-weight: 600;
+  }
+
+  // Warnings
+  &.wa {
+    color: #e0a477;
+    font-weight: 600;
+  }
+}
+
+
+// =============================================================================
+// Buttons
+// =============================================================================
+
+button {
+  min-width: 60px;
+  margin: 0.2em;
+  padding: 0.2em 1em 0.05em;
+
+  border: 1px solid $bonsai-green;
+  border-radius: 4px;
+
+  color: $bonsai-green-bright;
+  background-color: transparent;
+
+  box-shadow: 3px 3px $bonsai-green;
+
+  &:hover {
+    color: $nord6;
+    background-color: $bonsai-green-muted;
+  }
+}
+
+
+// =============================================================================
 // Tables
+// =============================================================================
+
 .table {
   color: $nord4;
 
@@ -244,40 +502,102 @@ button {
   }
 
   .header {
+    color: $nord6;
     border-bottom: 1px double $nord3;
+  }
+
+  a {
+    color: $bonsai-green-bright;
   }
 }
 
-// Blockquote
+
+// =============================================================================
+// Blockquotes
+// =============================================================================
+
 .blockquote {
-  border-left: 5px solid $nord8;
-  background-color: $nord1;
-  color: $nord4;
-  padding-left: 1rem;
   margin: 2em 5vw;
+  padding: 0.5em 1rem;
+
+  border-left: 5px solid $bonsai-green;
+
+  border-radius: 0.25rem;
+  background-color: $nord1;
+
+  color: $nord4;
+
+  em {
+    color: $bonsai-green-light;
+    font-family: $font-family-smallcaps;
+    font-style: normal;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+  }
 }
 
+
+// =============================================================================
 // Sidebar
+// =============================================================================
+
 .sidebar-navigation {
-  font-family: $font-family-text;
   background-color: $nord1;
+  font-family: $font-family-text;
+
+  .sidebar-item,
+  .sidebar-item-text,
+  .sidebar-section {
+    font-family: $font-family-headings;
+  }
+
+  .sidebar-item {
+    font-weight: 400;
+  }
 
   a {
     color: $nord4;
+
+    &:hover {
+      color: $bonsai-green-bright;
+    }
   }
 
-  a:hover {
-    color: $nord8;
+  .active {
+    color: $bonsai-green-bright !important;
   }
 }
 
+
+// =============================================================================
 // Sidebar logo
+// =============================================================================
+
 .sidebar-logo img {
   display: block;
-  margin: 1.5rem auto;
   max-width: 160px;
+  height: auto;
+  margin: 1.5rem auto 1rem;
+  border-radius: 20px;
 }
 
+
+// =============================================================================
+// Headroom
+// =============================================================================
+
 .headroom {
-    background-color: $nord1;
+  background-color: $nord1;
+}
+
+
+// =============================================================================
+// Horizontal rules
+// =============================================================================
+
+hr {
+  margin: 2em 20vw;
+  border-top: 1px solid $nord3;
+  border-bottom: 1px solid $nord3;
+  opacity: 1;
 }
