@@ -601,6 +601,13 @@ class PanopticQualityMetric(BioMetric):
     _default = mm.PanopticQualityMetric
 
 
+# %% ../nbs/060_metrics.ipynb #a7a5084f
+def _plain_tensor(x):
+    """Remove tensor subclass semantics without copying the underlying data."""
+    if isinstance(x, torchTensor) and type(x) is not torchTensor:
+        return x.as_subclass(torchTensor)
+    return x
+
 # %% ../nbs/060_metrics.ipynb #ebbd8afc
 def _accuracy_update(
     y_pred,
@@ -697,17 +704,13 @@ class _MonaiAccuracy:
 # %% ../nbs/060_metrics.ipynb #b3182266
 class _FastaiAccuracy(Metric):
     """
-    Fastai implementation of the bonsai accuracy metric.
+    Fastai implementation of the BONSAI accuracy metric.
 
     Predictions and targets are obtained from ``learn.pred`` and
     ``learn.yb[0]`` respectively.
     """
 
-    def __init__(
-        self,
-        axis=1,
-        is_multilabel=False,
-    ):
+    def __init__(self, axis=1, is_multilabel=False):
         self.axis = axis
         self.is_multilabel = is_multilabel
         self.reset()
@@ -717,9 +720,12 @@ class _FastaiAccuracy(Metric):
         self.num_examples = 0
 
     def accumulate(self, learn):
+        pred = _plain_tensor(learn.pred)
+        target = _plain_tensor(learn.yb[0])
+
         num_correct, num_examples = _accuracy_update(
-            learn.pred,
-            learn.yb[0],
+            pred,
+            target,
             axis=self.axis,
             is_multilabel=self.is_multilabel,
         )
@@ -731,7 +737,6 @@ class _FastaiAccuracy(Metric):
     def value(self):
         if self.num_examples == 0:
             return None
-
         return self.num_correct / self.num_examples
 
 # %% ../nbs/060_metrics.ipynb #ee436af2
