@@ -1,0 +1,35 @@
+website:
+  sidebar:
+    contents:
+      - index.ipynb
+      - 000_utils.ipynb
+      - 010_io.ipynb
+      - 021_data.core.ipynb
+      - 022_data.load.ipynb
+      - 023_data.tfms.ipynb
+      - 030_transforms.ipynb
+      - 040_losses.ipynb
+      - 050_nets.ipynb
+      - 060_metrics.ipynb
+      - 070_optimizers.ipynb
+      - 080_engines.ipynb
+      - 090_callbacks.ipynb
+      - 100_inference.ipynb
+      - 110_datasets.ipynb
+      - 120_visualize.ipynb
+      - section: Benchmarks
+        contents:
+          - Benchmarks/801_mednist_tutorial_bonsai.ipynb
+          - Benchmarks/801_mednist_tutorial_pytorch.ipynb
+          - Benchmarks/802_monai_101_bonsai.ipynb
+          - Benchmarks/802_monai_101_ignite.ipynb
+          - Benchmarks/803_image_restoration_bonsai.ipynb
+          - Benchmarks/803_image_restoration_pytorch.ipynb
+          - Benchmarks/804_multispectral_microscopy_pytorch.ipynb
+      - section: Tutorials
+        contents:
+          - Tutorials/901_tutorial_classification.ipynb
+          - Tutorials/902_tutorial_classification3D.ipynb
+          - Tutorials/903_tutorial_denoising.ipynb
+          - Tutorials/905_tutorial_histopathology.ipynb
+          - Tutorials/906_tutorial_Segmentation3D.ipynb

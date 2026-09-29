@@ -1,0 +1,9 @@
+project:
+  output-dir: _docs
+
+website:
+  title: "bonsai"
+  site-url: "https://deepCLEM.github.io/bonsai"
+  description: "Biomedical Open Network for Scientific Artificial Intelligence"
+  repo-branch: main
+  repo-url: "https://github.com/deepCLEM/bonsai"
