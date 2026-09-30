@@ -79,8 +79,7 @@ from .callbacks import CSVLogger, ShowGraphCallback
 
 # %% auto #0
 __all__ = ['TrainerFactory', 'BACKEND_REGISTRY', 'TRAINER_REGISTRY', 'register_backend', 'register_trainer', 'TrainerConfig',
-           'TrainerBackend', 'BioTrainer', 'fastai_build_trainer', 'fastai_fit', 'fastai_validate', 'fastai_predict',
-           'FastaiTrainerBackend', 'fastTrainer', 'visionTrainer', 'MonaiTrainerBackend']
+           'TrainerBackend', 'BioTrainer', 'FastaiTrainerBackend', 'fastTrainer', 'visionTrainer']
 
 # %% ../nbs/080_engines.ipynb #b878a4f6
 TrainerFactory = Callable[..., Any]
@@ -632,6 +631,31 @@ def _get_trainer(self):
 
     return trainer
 
+# %% ../nbs/080_engines.ipynb #47c37968
+def _build_trainer(self):
+    """
+    Build the trainer selected by ``config.trainer``.
+
+    Returns
+    -------
+    Any
+        The constructed trainer.
+    """
+    trainer_factory = self._get_trainer()
+
+    kwargs = self._translate_kwargs(
+        self._common_kwargs(),
+        target=trainer_factory,
+    )
+
+    kwargs.update(
+        self._backend_kwargs(
+            target=trainer_factory,
+        )
+    )
+
+    return trainer_factory(**kwargs)
+
 # %% ../nbs/080_engines.ipynb #2659ec66
 class TrainerBackend:
     """
@@ -706,6 +730,7 @@ TrainerBackend._translate_kwargs = _translate_kwargs
 TrainerBackend._common_kwargs = _common_kwargs
 TrainerBackend._backend_kwargs = _backend_kwargs
 TrainerBackend._get_trainer = _get_trainer
+TrainerBackend._build_trainer = _build_trainer
 
 # %% ../nbs/080_engines.ipynb #5961edf8
 def _trainer_backend_fit(self):
@@ -1113,33 +1138,8 @@ class BioTrainer:
         """
         return self.backend.recorder
 
-# %% ../nbs/080_engines.ipynb #10830cb5
-def fastai_build_trainer(self):
-    """
-    Build the trainer selected by ``config.trainer``.
-
-    Returns
-    -------
-    Any
-        The constructed native FastAI trainer.
-    """
-    trainer_factory = self._get_trainer()
-
-    kwargs = self._translate_kwargs(
-        self._common_kwargs(),
-        target=trainer_factory,
-    )
-
-    kwargs.update(
-        self._backend_kwargs(
-            target=trainer_factory,
-        )
-    )
-
-    return trainer_factory(**kwargs)
-
 # %% ../nbs/080_engines.ipynb #8ef75e4a
-def fastai_fit(
+def _fastai_fit(
     self,
     n_epoch=None,
     lr=None,
@@ -1200,7 +1200,7 @@ def fastai_fit(
     )
 
 # %% ../nbs/080_engines.ipynb #ed399495
-def fastai_validate(self):
+def _fastai_validate(self):
     """
     Run validation using the configured fastai trainer.
 
@@ -1222,7 +1222,7 @@ def fastai_validate(self):
 
 
 # %% ../nbs/080_engines.ipynb #917551da
-def fastai_predict(self, *args, **kwargs):
+def _fastai_predict(self, *args, **kwargs):
     """
     Run inference using the configured fastai trainer.
 
@@ -1283,11 +1283,9 @@ class FastaiTrainerBackend(TrainerBackend):
     def recorder(self):
         return self.trainer.recorder
 
-
-FastaiTrainerBackend._build_trainer = fastai_build_trainer
-FastaiTrainerBackend.fit = fastai_fit
-FastaiTrainerBackend.validate = fastai_validate
-FastaiTrainerBackend.predict = fastai_predict
+FastaiTrainerBackend.fit = _fastai_fit
+FastaiTrainerBackend.validate = _fastai_validate
+FastaiTrainerBackend.predict = _fastai_predict
 
 # %% ../nbs/080_engines.ipynb #0e561fee
 @register_trainer("fastai", "supervised")
@@ -1435,6 +1433,7 @@ def _timm_norm(dls, cfg, pretrained, n_in=3):
         dls.add_tfms([tfm],'after_batch')
 
 # %% ../nbs/080_engines.ipynb #84e632fd
+@register_trainer("fastai", "vision")
 @delegates(create_vision_model)
 def visionTrainer(  dataloaders: DataLoaders, # The DataLoader objects containing training and validation datasets.
                     model: callable, # A callable model that will be trained on the dataset.
@@ -1496,260 +1495,6 @@ def visionTrainer(  dataloaders: DataLoaders, # The DataLoader objects containin
     # keep track of args for loggers
     store_attr('model,normalize,n_out,pretrained', self=trainer, **kwargs)
     return trainer
-
-# %% ../nbs/080_engines.ipynb #53298699
-@register_trainer("fastai", "vision")
-def _fastai_vision(
-    *args: Any,
-    **kwargs: Any,
-) -> Any:
-    """
-    Construct the fastai-based vision trainer.
-
-    This trainer provides a vision-specific training workflow using
-    :class:`visionTrainer`.
-
-    Parameters
-    ----------
-    *args
-        Positional arguments forwarded to ``visionTrainer``.
-    **kwargs
-        Keyword arguments forwarded to ``visionTrainer``.
-
-    Returns
-    -------
-    visionTrainer
-        Configured vision training engine.
-    """
-    return visionTrainer(*args, **kwargs)
-
-# %% ../nbs/080_engines.ipynb #6937a5db
-@register_backend("monai")
-class MonaiTrainerBackend(TrainerBackend):
-    """
-    MONAI implementation of the bonsai trainer backend.
-
-    The backend composes MONAI's ``SupervisedTrainer`` and
-    ``SupervisedEvaluator`` to provide the validation semantics defined by
-    ``BioTrainer``.
-
-    The resulting lifecycle is:
-
-        train epoch
-            ↓
-        validation
-            ↓
-        train epoch
-            ↓
-        validation
-
-    Validation frequency is controlled by ``valid_every``.
-
-    This composition is intentional: MONAI's native trainer and evaluator
-    remain separate objects, while ``BioTrainer`` presents them as one
-    coherent training interface.
-    """
-
-    arg_map = {
-        "device": "device",
-        "epochs": "max_epochs",
-        "optimizer": "optimizer",
-        "model": "network",
-        "loss": "loss_function",
-        "inferer": "inferer",
-        "postprocessing": "postprocessing",
-    }
-
-    def __init__(self, config: TrainerConfig):
-        super().__init__(config)
-
-        from monai.engines import (
-            SupervisedEvaluator,
-            SupervisedTrainer,
-        )
-
-        self.trainer_cls = SupervisedTrainer
-        self.evaluator_cls = SupervisedEvaluator
-
-    @property
-    def train_loader(self):
-        """Return the training DataLoader."""
-        return self.config.dls.train
-
-    @property
-    def valid_loader(self):
-        """
-        Return the validation DataLoader from the bonsai DataLoaders object.
-
-        Returns
-        -------
-        Any or None
-            Validation DataLoader, or ``None`` when no validation split exists.
-        """
-        if self.config.dls is None:
-            return None
-
-        return getattr(self.config.dls, "valid", None)
-
-    def _build_trainer(self):
-        """
-        Construct the native MONAI ``SupervisedTrainer``.
-
-        The canonical bonsai configuration is translated into MONAI's
-        terminology and expected objects before construction.
-
-        Examples of argument translation include:
-
-        - ``epochs`` → ``max_epochs``
-        - ``model`` → ``network``
-        - ``loss`` → ``loss_function``
-        - ``dls.train`` → ``train_data_loader``
-        """
-        from monai.engines import SupervisedTrainer
-
-        values = self._common_kwargs()
-
-        # ``dls`` is a bonsai DataLoaders object, whereas MONAI expects
-        # the actual training DataLoader.
-        values["train_data_loader"] = self.train_loader
-        values.pop("dls", None)
-
-        kwargs = self._translate_kwargs(
-            values,
-            target=SupervisedTrainer,
-        )
-
-        kwargs.update(
-            self._backend_kwargs(
-                target=SupervisedTrainer,
-            )
-        )
-
-        return SupervisedTrainer(**kwargs)
-
-    def _build_evaluator(self):
-        """
-        Construct the native MONAI ``SupervisedEvaluator``.
-
-        The evaluator is created only when validation is enabled. It receives
-        the validation DataLoader and the model being trained.
-
-        Returns
-        -------
-        SupervisedEvaluator or None
-            Constructed evaluator, or ``None`` when validation is disabled.
-
-        Raises
-        ------
-        ValueError
-            If validation is enabled but no validation DataLoader is available.
-        """
-        from monai.engines import SupervisedEvaluator
-
-        cfg = self.config
-
-        if not cfg.validate:
-            return None
-
-        if self.valid_loader is None:
-            raise ValueError(
-                "Validation is enabled, but no validation DataLoader "
-                "is available."
-            )
-
-        values = {
-            "device": cfg.device,
-            "val_data_loader": self.valid_loader,
-            "network": cfg.model,
-            "inferer": cfg.inferer,
-            "postprocessing": cfg.postprocessing,
-        }
-
-        kwargs = self._translate_kwargs(
-            values,
-            target=SupervisedEvaluator,
-        )
-
-        kwargs.update(
-            self._backend_kwargs(
-                target=SupervisedEvaluator,
-            )
-        )
-
-        self.evaluator = SupervisedEvaluator(**kwargs)
-
-        return self.evaluator
-
-    def _attach_validation(self):
-        """
-        Attach scheduled validation to the MONAI training engine.
-
-        Validation is triggered by Ignite's ``EPOCH_COMPLETED`` event and is
-        executed every ``valid_every`` epochs.
-
-        Notes
-        -----
-        This method is the bridge between the backend-independent BioTrainer
-        contract and MONAI/Ignite's event-driven execution model.
-        """
-        if not self.config.validate:
-            return
-
-        from ignite.engine import Events
-
-        evaluator = self.evaluator
-        valid_every = self.config.valid_every
-
-        @self.trainer.on(Events.EPOCH_COMPLETED)
-        def _run_validation(engine):
-            if engine.state.epoch % valid_every == 0:
-                evaluator.run()
-
-    def fit(self):
-        """
-        Train the model using MONAI.
-
-        When validation is enabled, a ``SupervisedEvaluator`` is automatically
-        executed according to ``valid_every``.
-
-        Returns
-        -------
-        MonaiTrainerBackend
-            This backend instance.
-        """
-        if self.config.validate:
-            self._build_evaluator()
-            self._attach_validation()
-
-        self.trainer.run()
-
-        return self
-
-    def validate(self):
-        """
-        Run MONAI validation independently of training.
-
-        Returns
-        -------
-        ignite.engine.State
-            Evaluator state containing the validation results and metrics.
-
-        Raises
-        ------
-        ValueError
-            If validation is disabled.
-        """
-        if not self.config.validate:
-            raise ValueError(
-                "Validation is disabled for this trainer."
-            )
-
-        if self.evaluator is None:
-            self._build_evaluator()
-
-        self.evaluator.run()
-
-        return self.evaluator.state
 
 # %% ../nbs/080_engines.ipynb #f271a07a
 def _monai_trainer(
