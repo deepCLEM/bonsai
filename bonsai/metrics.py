@@ -826,17 +826,7 @@ class ROCAUCMetric(BioMetric):
         values when aggregating the metric.
 
     kwargs
-        Additional keyword arguments are passed directly to MONAI's
-        :class:`monai.metrics.ROCAUCMetric`.
-
-    Notes
-    -----
-    With ``backend="fastai"``, predictions are optionally activated and
-    converted to one-hot representations by ``ROCAUCFastaiMetric`` before
-    being passed to MONAI.
-
-    With the default MONAI backend, ``num_classes`` and ``act`` are not
-    interpreted by this wrapper; they are specific to the fastai adapter.
+        Additional keyword arguments.
 
     Examples
     --------
