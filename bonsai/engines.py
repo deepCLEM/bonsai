@@ -443,6 +443,9 @@ def _native_config(self) -> Dict[str, Any]:
                 metric_name(metrics[0]): metrics[0],
             }
         }
+        values["key_val_metric"] = {
+            metric_name(metrics[0]): metrics[0],
+        }
 
         if len(metrics) > 1:
             values["additional_metrics"] = {
@@ -462,6 +465,8 @@ def _native_config(self) -> Dict[str, Any]:
         "inferer": cfg.inferer,
         "postprocessing": cfg.postprocessing,
         "max_epochs": cfg.epochs,
+        "val_data_loader": cfg.dls.valid,
+        "val_handlers": cfg.callbacks,
     }
 
     values.update(metric_config(cfg.metrics))
@@ -550,8 +555,9 @@ class TrainerBackend:
 
     def __init__(self, config: TrainerConfig):
         self.config = config
+        self.evaluator = None 
         self.trainer = self._build_trainer()
-        self.evaluator = None   
+          
 
     @property
     def recorder(self):
@@ -1424,10 +1430,6 @@ def _monai_build_trainer(self):
 
     kwargs = self._translate_config(trainer_factory, drop_none=True)
 
-    if self.config.validate:
-        self.evaluator = self._build_evaluator()
-        self._attach_validation()
-
     return trainer_factory(**kwargs)
 
 # %% ../nbs/080_engines.ipynb #64f7cb96
@@ -1452,6 +1454,13 @@ class MonaiTrainerBackend(TrainerBackend):
     resolves the ``"supervised"`` trainer registered for the monai backend.
 
     """
+    def __init__(self, config: TrainerConfig):
+        self.config = config
+        self.trainer = self._build_trainer()
+
+        if self.config.validate:
+            self.evaluator = self._build_evaluator()
+            self._attach_validation()
 
     @property
     def recorder(self):
