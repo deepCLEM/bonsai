@@ -39,6 +39,7 @@ import torch.optim as toptim
 from torch.cuda import is_available as is_cuda_available
 from torch.nn.init import kaiming_normal_
 
+from monai.engines.utils import default_make_latent, default_metric_cmp_fn, default_prepare_batch
 # =================================
 # fastai
 # =================================
@@ -79,7 +80,8 @@ from .callbacks import CSVLogger, ShowGraphCallback
 
 # %% auto #0
 __all__ = ['TrainerFactory', 'BACKEND_REGISTRY', 'TRAINER_REGISTRY', 'register_backend', 'register_trainer', 'TrainerConfig',
-           'TrainerBackend', 'BioTrainer', 'FastaiTrainerBackend', 'fastTrainer', 'visionTrainer']
+           'TrainerBackend', 'BioTrainer', 'FastaiTrainerBackend', 'fastTrainer', 'visionTrainer',
+           'MonaiTrainerBackend']
 
 # %% ../nbs/080_engines.ipynb #b878a4f6
 TrainerFactory = Callable[..., Any]
@@ -516,6 +518,7 @@ def _translate_kwargs(
         translated[native_name] = value
 
     signature = self._native_signature(target)
+    # print(signature)
 
     if signature is None or self._accepts_kwargs(target):
         return translated
@@ -1496,6 +1499,50 @@ def visionTrainer(  dataloaders: DataLoaders, # The DataLoader objects containin
     store_attr('model,normalize,n_out,pretrained', self=trainer, **kwargs)
     return trainer
 
+# %% ../nbs/080_engines.ipynb #64f7cb96
+@register_backend("monai")
+class MonaiTrainerBackend(TrainerBackend):
+    """
+    MONAI implementation of the bonsai trainer backend.
+
+    This backend adapts the backend-independent :class:`TrainerConfig`
+    interface to bonsai's fastai-based training implementations.
+
+    The trainer implementation is selected through ``config.trainer`` and
+    resolved from ``TRAINER_REGISTRY["fastai"]``. For example::
+
+        BioTrainer(
+            model=model,
+            dls=dls,
+            backend="fastai",
+            trainer="supervised",
+        )
+
+    resolves the ``"supervised"`` trainer registered for the fastai backend.
+
+    Notes
+    -----
+    The registered trainer is expected to be a bonsai trainer such as
+    ``fastTrainer`` rather than a native fastai ``Learner``.
+    """
+
+    arg_map = {
+        "dls": "train_data_loader",
+        "epochs": "max_epochs",
+        "model": "network",
+        "loss": "loss_function",
+        "csv_logger": None,
+        "callbacks": "train_handlers",
+        "show_graph": None,
+        "show_summary": None,
+        "find_lr": None,
+        "find_lr_kwargs": None,
+    }
+
+# MonaiTrainerBackend.fit = _monai_fit
+# MonaiTrainerBackend.validate = _monai_validate
+# MonaiTrainerBackend.predict = _monai_predict
+
 # %% ../nbs/080_engines.ipynb #f271a07a
 def _monai_trainer(
     class_name: str,
@@ -1538,38 +1585,130 @@ def _monai_trainer(
 
     return trainer_class(*args, **kwargs)
 
-
+# %% ../nbs/080_engines.ipynb #f83e79a4
 @register_trainer("monai", "supervised")
 def _monai_supervised(
-    *args: Any,
-    **kwargs: Any,
+    device: str | torch.device,
+    max_epochs: int,
+    train_data_loader: Iterable | DataLoader,
+    network: torch.nn.Module,
+    optimizer: Optimizer,
+    loss_function: Callable,
+    epoch_length: int | None = None,
+    non_blocking: bool = False,
+    prepare_batch: Callable = default_prepare_batch,
+    iteration_update: Callable[[Engine, Any], Any] | None = None,
+    inferer: Inferer | None = None,
+    postprocessing: Transform | None = None,
+    key_train_metric: dict[str, Metric] | None = None,
+    additional_metrics: dict[str, Metric] | None = None,
+    metric_cmp_fn: Callable = default_metric_cmp_fn,
+    train_handlers: Sequence | None = None,
+    amp: bool = False,
+    event_names: list[str | EventEnum | type[EventEnum]] | None = None,
+    event_to_attr: dict | None = None,
+    decollate: bool = True,
+    optim_set_to_none: bool = False,
+    to_kwargs: dict | None = None,
+    amp_kwargs: dict | None = None,
+    compile: bool = False,
+    compile_kwargs: dict | None = None,
 ) -> Any:
     """
     Construct a MONAI ``SupervisedTrainer``.
 
-    The trainer implements MONAI's standard supervised training loop,
-    including model optimization, loss computation, and the associated
-    engine events.
+    This signature mirrors :class:`monai.engines.SupervisedTrainer`.
 
     Parameters
     ----------
-    *args
-        Positional arguments forwarded to ``SupervisedTrainer``.
-    **kwargs
-        Keyword arguments forwarded to ``SupervisedTrainer``.
+    device
+        Device on which to run.
+    max_epochs
+        Total number of epochs to run.
+    train_data_loader
+        Training data loader.
+    network
+        PyTorch network to train.
+    optimizer
+        Optimizer associated with the network.
+    loss_function
+        Loss function used for training.
+    epoch_length
+        Number of iterations per epoch. Defaults to the length of
+        ``train_data_loader``.
+    non_blocking
+        Whether data transfers should be asynchronous.
+    prepare_batch
+        Function used to prepare a batch for the network.
+    iteration_update
+        Callable executed for each training iteration.
+    inferer
+        Inference method used for the network forward pass.
+    postprocessing
+        Optional transformation applied to model outputs.
+    key_train_metric
+        Training metric(s) used as the main metric for comparison.
+    additional_metrics
+        Additional Ignite metrics attached to the engine.
+    metric_cmp_fn
+        Function used to compare the current metric with the best metric.
+    train_handlers
+        Ignite event handlers attached to the trainer.
+    amp
+        Whether to enable automatic mixed precision.
+    event_names
+        Additional custom Ignite events.
+    event_to_attr
+        Mapping from events to engine state attributes.
+    decollate
+        Whether to decollate batch-first data after model computation.
+    optim_set_to_none
+        Whether to use ``set_to_none=True`` when zeroing gradients.
+    to_kwargs
+        Additional keyword arguments passed to ``prepare_batch``.
+    amp_kwargs
+        Keyword arguments passed to ``torch.autocast``.
+    compile
+        Whether to use ``torch.compile``.
+    compile_kwargs
+        Keyword arguments passed to ``torch.compile``.
 
     Returns
     -------
-    monai.engines.SupervisedTrainer
-        Configured MONAI supervised training engine.
+    Any
+        Configured MONAI ``SupervisedTrainer``.
     """
     return _monai_trainer(
         "SupervisedTrainer",
-        *args,
-        **kwargs,
+        device=device,
+        max_epochs=max_epochs,
+        train_data_loader=train_data_loader,
+        network=network,
+        optimizer=optimizer,
+        loss_function=loss_function,
+        epoch_length=epoch_length,
+        non_blocking=non_blocking,
+        prepare_batch=prepare_batch,
+        iteration_update=iteration_update,
+        inferer=inferer,
+        postprocessing=postprocessing,
+        key_train_metric=key_train_metric,
+        additional_metrics=additional_metrics,
+        metric_cmp_fn=metric_cmp_fn,
+        train_handlers=train_handlers,
+        amp=amp,
+        event_names=event_names,
+        event_to_attr=event_to_attr,
+        decollate=decollate,
+        optim_set_to_none=optim_set_to_none,
+        to_kwargs=to_kwargs,
+        amp_kwargs=amp_kwargs,
+        compile=compile,
+        compile_kwargs=compile_kwargs,
     )
 
 
+# %% ../nbs/080_engines.ipynb #a461046c
 @register_trainer("monai", "gan")
 def _monai_gan(
     *args: Any,
