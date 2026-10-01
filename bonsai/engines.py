@@ -407,204 +407,67 @@ def _validate_trainer_config(config: TrainerConfig):
         "Backend",
     )
 
-# %% ../nbs/080_engines.ipynb #4d1a8916
-def _native_signature(
-    self,
-    target=None,
-):
+# %% ../nbs/080_engines.ipynb #7c0082a7
+def _native_config(self) -> Dict[str, Any]:
     """
-    Return the signature of a native trainer or callable.
-
-    Parameters
-    ----------
-    target
-        Callable or class to inspect. If omitted, ``trainer_cls`` is used.
-
-    Returns
-    -------
-    inspect.Signature or None
-        Native signature, or ``None`` if it cannot be inspected.
-    """
-    target = target or self.trainer_cls
-
-    if target is None:
-        return None
-
-    try:
-        return inspect.signature(target)
-    except (TypeError, ValueError):
-        return None
-
-
-# %% ../nbs/080_engines.ipynb #727ffbbd
-def _accepts_kwargs(
-    self,
-    target=None,
-) -> bool:
-    """
-    Check whether a native callable accepts arbitrary keyword arguments.
-
-    Parameters
-    ----------
-    target
-        Callable or class to inspect.
-
-    Returns
-    -------
-    bool
-        ``True`` when the callable defines ``**kwargs``.
-    """
-    signature = self._native_signature(target)
-
-    if signature is None:
-        return False
-
-    return any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD
-        for parameter in signature.parameters.values()
-    )
-
-# %% ../nbs/080_engines.ipynb #ac2e1a04
-def _translate_kwargs(
-    self,
-    values: Mapping[str, Any],
-    target=None,
-    *,
-    drop_none: bool = True,
-) -> Dict[str, Any]:
-    """
-    Translate canonical arguments to native framework arguments.
-
-    Parameters
-    ----------
-    values
-        Mapping containing canonical bonsai argument names.
-    target
-        Native callable that will receive the translated arguments.
-    drop_none
-        If ``True``, arguments whose value is ``None`` are omitted.
+    Return the trainer configuration using native argument names.
 
     Returns
     -------
     dict
-        Arguments accepted by the native callable.
-
-    Notes
-    -----
-    Translation happens in two stages:
-
-    1. canonical names are renamed using ``arg_map``;
-    2. unsupported arguments are removed using the native signature.
-
-    For example, a MONAI backend can translate:
-
-    ``epochs`` -> ``max_epochs``
-
-    ``model`` -> ``network``
-
-    ``loss`` -> ``loss_function``
-    """
-    target = target or self.trainer_cls
-
-    translated = {}
-
-    for name, value in values.items():
-
-        if drop_none and value is None:
-            continue
-
-        native_name = self.arg_map.get(name, name)
-
-        translated[native_name] = value
-
-    signature = self._native_signature(target)
-    # print(signature)
-
-    if signature is None or self._accepts_kwargs(target):
-        return translated
-
-    allowed = set(signature.parameters)
-
-    return {
-        name: value
-        for name, value in translated.items()
-        if name in allowed
-    }
-
-# %% ../nbs/080_engines.ipynb #f9fbad36
-def _common_kwargs(
-    self,
-) -> Dict[str, Any]:
-    """
-    Collect arguments shared by the canonical trainer API.
-
-    Returns
-    -------
-    dict
-        Canonical training arguments used by backend adapters to construct
-        native trainers.
-
-    Notes
-    -----
-    Validation scheduling options such as ``validate`` and ``valid_every``
-    are intentionally excluded. They control orchestration rather than
-    native trainer construction.
-
-    The canonical names are preserved here. Backend-specific ``arg_map``
-    definitions are responsible for translating names when a native
-    framework uses different terminology.
+        Configuration arguments mapped to the names expected by the native
+        trainer. Metrics are normalized to the dictionary format expected by
+        MONAI.
     """
     cfg = self.config
 
-    return {
-        "model": cfg.model,
-        "dls": cfg.dls,
+    def metric_config(metrics):
+        if metrics is None:
+            return {}
+
+        metrics = (
+            metrics
+            if isinstance(metrics, (list, tuple))
+            else [metrics]
+        )
+
+        if not metrics:
+            return {}
+
+        def metric_name(metric):
+            name = getattr(metric, "name", None)
+            return name or metric.__class__.__name__.removesuffix("Metric")
+
+        values = {
+            "key_train_metric": {
+                metric_name(metrics[0]): metrics[0],
+            }
+        }
+
+        if len(metrics) > 1:
+            values["additional_metrics"] = {
+                metric_name(metric): metric
+                for metric in metrics[1:]
+            }
+
+        return values
+
+    values = {
+        "network": cfg.model,
+        "train_data_loader": cfg.dls.train,
         "optimizer": cfg.optimizer,
-        "loss": cfg.loss,
-        "metrics": cfg.metrics,
-        "epochs": cfg.epochs,
-        "lr": cfg.lr,
+        "loss_function": cfg.loss,
+        "train_handlers": cfg.callbacks,
         "device": cfg.device,
-        "callbacks": cfg.callbacks,
         "inferer": cfg.inferer,
         "postprocessing": cfg.postprocessing,
-        "csv_logger": cfg.csv_logger,
-        "show_graph": cfg.show_graph,
-        "show_summary": cfg.show_summary,
-        "find_lr": cfg.find_lr,
-        "find_lr_kwargs": cfg.find_lr_kwargs,
-        "save_dir": cfg.save_dir,
+        "max_epochs": cfg.epochs,
     }
 
-# %% ../nbs/080_engines.ipynb #947e79ee
-def _backend_kwargs(
-    self,
-    target=None,
-) -> Dict[str, Any]:
-    """
-    Translate explicitly supplied backend-specific arguments.
+    values.update(metric_config(cfg.metrics))
+    values.update(cfg.backend_kwargs)
 
-    Parameters
-    ----------
-    target
-        Native callable that will receive the arguments.
-
-    Returns
-    -------
-    dict
-        Backend-specific arguments accepted by the target.
-
-    Notes
-    -----
-    ``backend_kwargs`` is an escape hatch for framework-specific features.
-    Functionality shared across multiple backends should instead be exposed
-    through the canonical ``BioTrainer`` API.
-    """
-    return self._translate_kwargs(
-        self.config.backend_kwargs,
-        target=target,
-        drop_none=False,
-    )
+    return values
 
 # %% ../nbs/080_engines.ipynb #b7dcb76f
 def _get_trainer(self):
@@ -646,16 +509,7 @@ def _build_trainer(self):
     """
     trainer_factory = self._get_trainer()
 
-    kwargs = self._translate_kwargs(
-        self._common_kwargs(),
-        target=trainer_factory,
-    )
-
-    kwargs.update(
-        self._backend_kwargs(
-            target=trainer_factory,
-        )
-    )
+    kwargs = self._translate_config(trainer_factory, drop_none=True)
 
     return trainer_factory(**kwargs)
 
@@ -691,7 +545,7 @@ class TrainerBackend:
     lifecycle methods can operate on an already-configured native trainer.
     """
 
-    arg_map: Mapping[str, str] = {}
+    config_map: Mapping[str, Any] = {}
     trainer_cls: Any = None
 
     def __init__(self, config: TrainerConfig):
@@ -705,11 +559,9 @@ class TrainerBackend:
         return None
 
 
-TrainerBackend._native_signature = _native_signature
-TrainerBackend._accepts_kwargs = _accepts_kwargs
-TrainerBackend._translate_kwargs = _translate_kwargs
-TrainerBackend._common_kwargs = _common_kwargs
-TrainerBackend._backend_kwargs = _backend_kwargs
+TrainerBackend._validate_trainer_config = _validate_trainer_config
+TrainerBackend._native_config = _native_config
+TrainerBackend._translate_config = _translate_config
 TrainerBackend._get_trainer = _get_trainer
 TrainerBackend._build_trainer = _build_trainer
 
@@ -1253,12 +1105,23 @@ class FastaiTrainerBackend(TrainerBackend):
     The registered trainer is expected to be a bonsai trainer such as
     ``fastTrainer`` rather than a native fastai ``Learner``.
     """
+    def _native_config(self) -> Dict[str, Any]:
+        cfg = self.config
 
-    arg_map = {
-        "dls": "dataloaders",
-        "loss": "loss_fn",
-        "save_dir": "model_dir",
-    }
+        return {
+            "dataloaders": cfg.dls,
+            "model": cfg.model,
+            "loss_fn": cfg.loss,
+            "optimizer": cfg.optimizer,
+            "lr": cfg.lr,
+            "callbacks": cfg.callbacks,
+            "metrics": cfg.metrics,
+            "cvs_log": cfg.csv_logger,
+            "show_graph": cfg.show_graph,
+            "show_summary": cfg.show_summary,
+            "model_dir": cfg.save_dir,
+            **cfg.backend_kwargs,
+        }
 
     @property
     def recorder(self):
@@ -1487,20 +1350,37 @@ def _monai_build_evaluator(self):
     Any
         The constructed evaluator.
     """
-    trainer_factory = self._get_trainer()
-
-    kwargs = self._translate_kwargs(
-        self._common_kwargs(),
-        target=trainer_factory,
-    )
-    
-    kwargs.update(
-        self._backend_kwargs(
-            target=trainer_factory,
+    backend_trainers = TRAINER_REGISTRY.get(
+            self.config.backend,
+            {},
         )
+    
+    evaluator_spec = self.config.backend_kwargs.get(
+        "evaluator",
+        "supervised_evaluator",
     )
 
-    return trainer_factory(**kwargs)
+    if isinstance(evaluator_spec, str):
+        evaluator = backend_trainers.get(evaluator_spec)
+    elif callable(evaluator_spec):
+        evaluator = evaluator_spec
+    else:
+        evaluator = None
+
+    if evaluator is None:
+        available = ", ".join(
+            sorted(backend_trainers)
+        )
+
+        raise ValueError(
+            f"Unknown evaluator {self.config.evaluator!r} for "
+            f"backend {self.config.backend!r}. "
+            f"Available evaluators: {available or 'none'}"
+        )
+    
+    kwargs = self._translate_config(evaluator, drop_none=True)
+
+    return evaluator(**kwargs)
 
 # %% ../nbs/080_engines.ipynb #66664872
 def _monai_attach_validation(self):
@@ -1542,20 +1422,11 @@ def _monai_build_trainer(self):
     """
     trainer_factory = self._get_trainer()
 
-    kwargs = self._translate_kwargs(
-        self._common_kwargs(),
-        target=trainer_factory,
-    )
-    
-    kwargs.update(
-        self._backend_kwargs(
-            target=trainer_factory,
-        )
-    )
+    kwargs = self._translate_config(trainer_factory, drop_none=True)
 
     if self.config.validate:
-        self.evaluator = self._monai_build_evaluator()
-        self._monai_attach_validation()
+        self.evaluator = self._build_evaluator()
+        self._attach_validation()
 
     return trainer_factory(**kwargs)
 
@@ -1566,33 +1437,21 @@ class MonaiTrainerBackend(TrainerBackend):
     MONAI implementation of the bonsai trainer backend.
 
     This backend adapts the backend-independent :class:`TrainerConfig`
-    interface to bonsai's fastai-based training implementations.
+    interface to bonsai's monai-based training implementations.
 
     The trainer implementation is selected through ``config.trainer`` and
-    resolved from ``TRAINER_REGISTRY["fastai"]``. For example::
+    resolved from ``TRAINER_REGISTRY["monai"]``. For example::
 
         BioTrainer(
             model=model,
             dls=dls,
-            backend="fastai",
+            backend="monai",
             trainer="supervised",
         )
 
-    resolves the ``"supervised"`` trainer registered for the fastai backend.
+    resolves the ``"supervised"`` trainer registered for the monai backend.
 
-    Notes
-    -----
-    The registered trainer is expected to be a bonsai trainer such as
-    ``fastTrainer`` rather than a native fastai ``Learner``.
     """
-
-    arg_map = {
-        "dls": "train_data_loader",
-        "epochs": "max_epochs",
-        "model": "network",
-        "loss": "loss_function",
-        "callbacks": "train_handlers",
-    }
 
     @property
     def recorder(self):
@@ -1615,6 +1474,8 @@ class MonaiTrainerBackend(TrainerBackend):
 
 
 MonaiTrainerBackend._build_trainer = _monai_build_trainer
+MonaiTrainerBackend._build_evaluator = _monai_build_evaluator
+MonaiTrainerBackend._attach_validation = _monai_attach_validation
 # MonaiTrainerBackend.validate = _monai_validate
 # MonaiTrainerBackend.predict = _monai_predict
 
