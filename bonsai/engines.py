@@ -699,28 +699,6 @@ class TrainerBackend:
         self.trainer = self._build_trainer()
         self.evaluator = None   
 
-    def _build_trainer(self):
-        """
-        Construct and store the native framework trainer.
-
-        Backend subclasses must implement this method.
-
-        Returns
-        -------
-        Any
-            The constructed native trainer.
-
-        Notes
-        -----
-        Construction is intentionally eager. Backend-specific constructor
-        options such as ``show_summary`` therefore take effect when the
-        :class:`TrainerBackend` is created, rather than when ``fit()`` is
-        first called.
-        """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} must implement `_build_trainer()`."
-        )
-
     @property
     def recorder(self):
         """Return the backend training recorder, when available."""
@@ -1499,6 +1477,88 @@ def visionTrainer(  dataloaders: DataLoaders, # The DataLoader objects containin
     store_attr('model,normalize,n_out,pretrained', self=trainer, **kwargs)
     return trainer
 
+# %% ../nbs/080_engines.ipynb #94771da3
+def _monai_build_evaluator(self):
+    """
+    Build the evaluator selected by ``config.trainer``.
+
+    Returns
+    -------
+    Any
+        The constructed evaluator.
+    """
+    trainer_factory = self._get_trainer()
+
+    kwargs = self._translate_kwargs(
+        self._common_kwargs(),
+        target=trainer_factory,
+    )
+    
+    kwargs.update(
+        self._backend_kwargs(
+            target=trainer_factory,
+        )
+    )
+
+    return trainer_factory(**kwargs)
+
+# %% ../nbs/080_engines.ipynb #66664872
+def _monai_attach_validation(self):
+    """
+    Attach scheduled validation to the MONAI training engine.
+
+    Validation is triggered by Ignite's ``EPOCH_COMPLETED`` event and is
+    executed every ``valid_every`` epochs.
+
+    Notes
+    -----
+    This method is the bridge between the backend-independent BioTrainer
+    contract and MONAI/Ignite's event-driven execution model.
+    """
+    from monai.handlers import ValidationHandler
+
+    evaluator = self.evaluator
+    valid_every = self.config.valid_every
+    epoch_level = self.config.backend_kwargs.get("epoch_level", True)
+    exec_at_start = self.config.backend_kwargs.get("exec_at_start", False)
+
+    validation_handler = ValidationHandler(
+        validator=evaluator,
+        epoch_level=epoch_level,
+        interval=valid_every,
+        exec_at_start=exec_at_start
+    )
+    validation_handler.attach(self.trainer)
+
+# %% ../nbs/080_engines.ipynb #2779810c
+def _monai_build_trainer(self):
+    """
+    Build the trainer selected by ``config.trainer``.
+
+    Returns
+    -------
+    Any
+        The constructed trainer.
+    """
+    trainer_factory = self._get_trainer()
+
+    kwargs = self._translate_kwargs(
+        self._common_kwargs(),
+        target=trainer_factory,
+    )
+    
+    kwargs.update(
+        self._backend_kwargs(
+            target=trainer_factory,
+        )
+    )
+
+    if self.config.validate:
+        self.evaluator = self._monai_build_evaluator()
+        self._monai_attach_validation()
+
+    return trainer_factory(**kwargs)
+
 # %% ../nbs/080_engines.ipynb #64f7cb96
 @register_backend("monai")
 class MonaiTrainerBackend(TrainerBackend):
@@ -1531,15 +1591,30 @@ class MonaiTrainerBackend(TrainerBackend):
         "epochs": "max_epochs",
         "model": "network",
         "loss": "loss_function",
-        "csv_logger": None,
         "callbacks": "train_handlers",
-        "show_graph": None,
-        "show_summary": None,
-        "find_lr": None,
-        "find_lr_kwargs": None,
     }
 
-# MonaiTrainerBackend.fit = _monai_fit
+    @property
+    def recorder(self):
+        return self.trainer.state
+
+    def fit(self):
+        """
+        Train the model using MONAI.
+
+        When validation is enabled, a ``SupervisedEvaluator`` is automatically
+        executed according to ``valid_every``.
+
+        Returns
+        -------
+        MonaiTrainerBackend
+            This backend instance.
+        """
+
+        return self.trainer.run()
+
+
+MonaiTrainerBackend._build_trainer = _monai_build_trainer
 # MonaiTrainerBackend.validate = _monai_validate
 # MonaiTrainerBackend.predict = _monai_predict
 
@@ -1701,6 +1776,113 @@ def _monai_supervised(
         event_to_attr=event_to_attr,
         decollate=decollate,
         optim_set_to_none=optim_set_to_none,
+        to_kwargs=to_kwargs,
+        amp_kwargs=amp_kwargs,
+        compile=compile,
+        compile_kwargs=compile_kwargs,
+    )
+
+
+# %% ../nbs/080_engines.ipynb #b7d2f9db
+@register_trainer("monai", "supervised_evaluator")
+def _monai_supervisedevaluator(
+    device: str | torch.device,
+    val_data_loader: Iterable | DataLoader,
+    network: torch.nn.Module,
+    epoch_length: int | None = None,
+    non_blocking: bool = False,
+    prepare_batch: Callable = default_prepare_batch,
+    iteration_update: Callable[[Engine, Any], Any] | None = None,
+    inferer: Inferer | None = None,
+    postprocessing: Transform | None = None,
+    key_val_metric: dict[str, Metric] | None = None,
+    additional_metrics: dict[str, Metric] | None = None,
+    metric_cmp_fn: Callable = default_metric_cmp_fn,
+    val_handlers: Sequence | None = None,
+    amp: bool = False,
+    event_names: list[str | EventEnum | type[EventEnum]] | None = None,
+    event_to_attr: dict | None = None,
+    decollate: bool = True,
+    to_kwargs: dict | None = None,
+    amp_kwargs: dict | None = None,
+    compile: bool = False,
+    compile_kwargs: dict | None = None,
+) -> Any:
+    """
+    Construct a MONAI ``SupervisedTrainer``.
+
+    This signature mirrors :class:`monai.engines.SupervisedTrainer`.
+
+    Parameters
+    ----------
+    device
+        Device on which to run.
+    val_data_loader
+        Training data loader.
+    network
+        PyTorch network to train.
+    epoch_length
+        Number of iterations per epoch. Defaults to the length of
+        ``val_data_loader``.
+    non_blocking
+        Whether data transfers should be asynchronous.
+    prepare_batch
+        Function used to prepare a batch for the network.
+    iteration_update
+        Callable executed for each training iteration.
+    inferer
+        Inference method used for the network forward pass.
+    postprocessing
+        Optional transformation applied to model outputs.
+    key_val_metric
+        Training metric(s) used as the main metric for comparison.
+    additional_metrics
+        Additional Ignite metrics attached to the engine.
+    metric_cmp_fn
+        Function used to compare the current metric with the best metric.
+    val_handlers
+        Ignite event handlers attached to the trainer.
+    amp
+        Whether to enable automatic mixed precision.
+    event_names
+        Additional custom Ignite events.
+    event_to_attr
+        Mapping from events to engine state attributes.
+    decollate
+        Whether to decollate batch-first data after model computation.
+    to_kwargs
+        Additional keyword arguments passed to ``prepare_batch``.
+    amp_kwargs
+        Keyword arguments passed to ``torch.autocast``.
+    compile
+        Whether to use ``torch.compile``.
+    compile_kwargs
+        Keyword arguments passed to ``torch.compile``.
+
+    Returns
+    -------
+    Any
+        Configured MONAI ``SupervisedTrainer``.
+    """
+    return _monai_trainer(
+        "SupervisedEvaluator",
+        device=device,
+        val_data_loader=val_data_loader,
+        network=network,
+        epoch_length=epoch_length,
+        non_blocking=non_blocking,
+        prepare_batch=prepare_batch,
+        iteration_update=iteration_update,
+        inferer=inferer,
+        postprocessing=postprocessing,
+        key_val_metric=key_val_metric,
+        additional_metrics=additional_metrics,
+        metric_cmp_fn=metric_cmp_fn,
+        val_handlers=val_handlers,
+        amp=amp,
+        event_names=event_names,
+        event_to_attr=event_to_attr,
+        decollate=decollate,
         to_kwargs=to_kwargs,
         amp_kwargs=amp_kwargs,
         compile=compile,
