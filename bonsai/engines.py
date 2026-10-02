@@ -907,8 +907,7 @@ class BioTrainer:
         BioTrainer
             The trainer instance.
         """
-        self.backend.fit()
-        return self
+        return self.backend.fit()
 
     def validate(self):
         """
@@ -1478,7 +1477,6 @@ class MonaiTrainerBackend(TrainerBackend):
         MonaiTrainerBackend
             This backend instance.
         """
-
         return self.trainer.run()
 
 
@@ -1659,7 +1657,7 @@ def _monai_supervisedevaluator(
     device: str | torch.device,
     val_data_loader: Iterable | DataLoader,
     network: torch.nn.Module,
-    epoch_length: int | None = None,
+    val_epoch_length: int | None = None,
     non_blocking: bool = False,
     prepare_batch: Callable = default_prepare_batch,
     iteration_update: Callable[[Engine, Any], Any] | None = None,
@@ -1691,7 +1689,7 @@ def _monai_supervisedevaluator(
         Training data loader.
     network
         PyTorch network to train.
-    epoch_length
+    val_epoch_length
         Number of iterations per epoch. Defaults to the length of
         ``val_data_loader``.
     non_blocking
@@ -1739,7 +1737,7 @@ def _monai_supervisedevaluator(
         device=device,
         val_data_loader=val_data_loader,
         network=network,
-        epoch_length=epoch_length,
+        epoch_length=val_epoch_length,
         non_blocking=non_blocking,
         prepare_batch=prepare_batch,
         iteration_update=iteration_update,
