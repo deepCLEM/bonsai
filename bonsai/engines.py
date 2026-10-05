@@ -302,7 +302,10 @@ class TrainerConfig:
     loss
         Loss function used during training.
     metrics
-        Metrics evaluated during validation.
+        Metrics evaluated during training.
+    val_metrics
+        Metrics evaluated during validation. If ``None``, ``metrics`` are
+        used for validation.
     epochs
         Number of training epochs.
     lr
@@ -350,6 +353,11 @@ class TrainerConfig:
     :func:`bonsai.set_backend`. ``TrainerConfig`` stores the resolved
     backend so that the trainer adapter can consistently use the backend
     selected when the :class:`BioTrainer` was created.
+
+    ``val_metrics`` is intentionally separate from ``metrics`` so that
+    training and validation can use different metric sets. When
+    ``val_metrics`` is ``None``, the training metrics are reused for
+    validation.
     """
 
     model: Any = None
@@ -358,6 +366,7 @@ class TrainerConfig:
     optimizer: Any = None
     loss: Any = None
     metrics: Any = None
+    val_metrics: Any = None
 
     epochs: int = 1
     lr: Optional[float] = None
@@ -367,6 +376,7 @@ class TrainerConfig:
 
     device: Any = None
     callbacks: Any = None
+    val_callbacks: Any = None
 
     inferer: Any = None
     postprocessing: Any = None
@@ -411,70 +421,102 @@ def _validate_trainer_config(config: TrainerConfig):
     )
 
 # %% ../nbs/080_engines.ipynb #7d8de85c
-def _monai_metric_config(metrics):
+def _monai_metric_config(metrics, val_metrics=None):
     """
     Build the MONAI trainer metric configuration.
 
-    The first metric is used as the key metric for both training and
-    validation. Any remaining metrics are registered as additional metrics.
+    The first training metric is used as ``key_train_metric`` and the first
+    validation metric is used as ``key_val_metric``. Remaining metrics are
+    registered as additional metrics.
+
+    If ``val_metrics`` is not provided, ``metrics`` is used for validation.
+    ``val_metrics`` may also be provided independently when ``metrics`` is
+    ``None``.
 
     Parameters
     ----------
-    metrics : metric or sequence of metrics or None
-        Metric instance or collection of metric instances to register.
-        The first metric is used as the key metric.
+    metrics : metric, sequence of metrics, or None
+        Metric instance or collection of metric instances to register for
+        training. The first metric is used as the key training metric.
+    val_metrics : metric, sequence of metrics, or None
+        Metric instance or collection of metric instances to register for
+        validation. The first metric is used as the key validation metric.
+        If ``None``, ``metrics`` is used as the validation metrics.
 
     Returns
     -------
     dict
-        Configuration dictionary containing ``key_train_metric`` and
-        ``key_val_metric`` for the first metric, and ``additional_metrics``
-        when more than one metric is provided.
+        MONAI trainer metric configuration. Depending on the supplied
+        metrics, this may contain ``key_train_metric``,
+        ``key_val_metric``, ``additional_metrics``, and
+        ``additional_val_metrics``.
 
     Notes
     -----
     Metric names are obtained from the ``name`` attribute when available.
     If ``name`` is callable, it is called to obtain the metric name.
-    Otherwise, the metric class name is used.
+    Otherwise, the metric class name is used with a trailing ``"Metric"``
+    suffix removed.
+
+    Each metric is wrapped in an ``IgniteMetricHandler`` using the
+    ``pred`` and ``label`` outputs from the engine.
     """
-    if metrics is None:
-        return {}
-
-    metrics = (
-        metrics
-        if isinstance(metrics, (list, tuple))
-        else [metrics]
-    )
-
-    if not metrics:
-        return {}
-
     def metric_name(metric):
-        name = getattr(metric, "name", metric.__class__.__name__.removesuffix("Metric"))
+        name = getattr(
+            metric,
+            "name",
+            metric.__class__.__name__.removesuffix("Metric"),
+        )
         return name() if callable(name) else name
 
     def wrap_handler(metric):
         return IgniteMetricHandler(
-            metric_fn=metric, 
-            output_transform=from_engine(["pred", "label"])
-            )
+            metric_fn=metric,
+            output_transform=from_engine(["pred", "label"]),
+        )
 
-    key_metric = metrics[0]
+    def as_list(metrics):
+        if metrics is None:
+            return None
+        return (
+            list(metrics)
+            if isinstance(metrics, (list, tuple))
+            else [metrics]
+        )
 
-    values = {
-        "key_train_metric": {
+    metrics = as_list(metrics)
+    val_metrics = as_list(val_metrics)
+
+    if val_metrics is None:
+        val_metrics = metrics
+
+    values = {}
+
+    if metrics:
+        key_metric = metrics[0]
+
+        values["key_train_metric"] = {
             metric_name(key_metric): wrap_handler(key_metric),
-        },
-        "key_val_metric": {
-            metric_name(key_metric): wrap_handler(key_metric),
-        },
-    }
-
-    if len(metrics) > 1:
-        values["additional_metrics"] = {
-            metric_name(metric): wrap_handler(metric)
-            for metric in metrics[1:]
         }
+
+        if len(metrics) > 1:
+            values["additional_metrics"] = {
+                metric_name(metric): wrap_handler(metric)
+                for metric in metrics[1:]
+            }
+
+    if val_metrics:
+        key_val_metric = val_metrics[0]
+
+        values["key_val_metric"] = {
+            metric_name(key_val_metric): wrap_handler(key_val_metric),
+        }
+
+        if len(val_metrics) > 1:
+            values["additional_val_metrics"] = {
+                metric_name(metric): wrap_handler(metric)
+                for metric in val_metrics[1:]
+            }
 
     return values
 
@@ -488,7 +530,8 @@ def _native_config(self) -> Dict[str, Any]:
     dict
         Configuration arguments mapped to the names expected by the native
         trainer. Metrics are normalized to the dictionary format expected by
-        MONAI.
+        MONAI. Explicit values provided through ``backend_kwargs`` override
+        the generated configuration.
     """
     cfg = self.config
 
@@ -503,10 +546,10 @@ def _native_config(self) -> Dict[str, Any]:
         "postprocessing": cfg.postprocessing,
         "max_epochs": cfg.epochs,
         "val_data_loader": cfg.dls.valid,
-        "val_handlers": cfg.callbacks,
+        "val_handlers": cfg.val_callbacks,
     }
 
-    values.update(_monai_metric_config(cfg.metrics))
+    values.update(_monai_metric_config(cfg.metrics, cfg.val_metrics))
     values.update(cfg.backend_kwargs)
 
     return values
@@ -764,10 +807,22 @@ class BioTrainer:
         Additional arguments used to instantiate ``loss`` when it is
         provided as a class.
     metrics
-        Metric class, callable, or sequence of metric classes/callables.
-        Metric classes are instantiated using ``metrics_kwargs``.
+        Metric class, callable, or sequence of metric classes/callables
+        evaluated during training. Metric classes are instantiated using
+        ``metrics_kwargs``.
     metrics_kwargs
-        Additional arguments used to instantiate metric classes.
+        Additional arguments used to instantiate training metrics. A
+        dictionary is shared by all metrics, while a sequence of
+        dictionaries provides arguments for each metric individually.
+    val_metrics
+        Metric class, callable, or sequence of metric classes/callables
+        evaluated during validation. If ``None``, ``metrics`` are used.
+    val_metrics_kwargs
+        Additional arguments used to instantiate validation metrics. A
+        dictionary is shared by all validation metrics, while a sequence
+        of dictionaries provides arguments for each metric individually.
+        If ``None`` and ``val_metrics`` is ``None``, ``metrics_kwargs`` are
+        used.
     epochs
         Number of training epochs.
     lr
@@ -847,12 +902,17 @@ class BioTrainer:
         loss_kwargs=None,
         metrics=None,
         metrics_kwargs=None,
+        val_metrics=None,
+        val_metrics_kwargs=None,
         epochs=1,
         lr=None,
         validate=True,
         valid_every=1,
         device=None,
         callbacks=None,
+        callbacks_kwargs=None,
+        val_callbacks=None, 
+        val_callbacks_kwargs=None,
         inferer=None,
         postprocessing=None,
         csv_logger=False,
@@ -868,7 +928,12 @@ class BioTrainer:
 
         optimizer_kwargs = dict(optimizer_kwargs or {})
         loss_kwargs = dict(loss_kwargs or {})
-        metrics_kwargs = dict(metrics_kwargs or {})
+        metrics_kwargs =  dict(metrics_kwargs or {})
+
+        if val_metrics is None:
+            val_metrics = metrics
+            if val_metrics_kwargs is None:
+                val_metrics_kwargs = metrics_kwargs
 
         # Resolve framework-independent components before constructing the
         # backend. Every component uses the same globally selected backend.
@@ -882,10 +947,25 @@ class BioTrainer:
             metrics_kwargs,
         )
 
+        resolved_val_metrics = _instantiate_metrics(
+            val_metrics,
+            val_metrics_kwargs,
+        )
+
         resolved_optimizer = self._resolve_optimizer(
             optimizer,
             optimizer_kwargs,
             model,
+        )
+
+        resolved_callbacks = _instantiate_metrics(
+            callbacks,
+            callbacks_kwargs,
+        )
+
+        resolved_val_callbacks = _instantiate_metrics(
+            val_callbacks,
+            val_callbacks_kwargs,
         )
 
         self.config = TrainerConfig(
@@ -894,12 +974,14 @@ class BioTrainer:
             optimizer=resolved_optimizer,
             loss=resolved_loss,
             metrics=resolved_metrics,
+            val_metrics=resolved_val_metrics,
             epochs=epochs,
             lr=lr,
             validate=validate,
             valid_every=valid_every,
             device=device,
-            callbacks=callbacks,
+            callbacks=resolved_callbacks,
+            val_callbacks=resolved_val_callbacks,
             inferer=inferer,
             postprocessing=postprocessing,
             csv_logger=csv_logger,
@@ -928,7 +1010,6 @@ class BioTrainer:
         if optimizer is None:
             return None
 
-        # Already-instantiated optimizer/factory.
         if not inspect.isclass(optimizer):
             return optimizer
 
@@ -952,9 +1033,7 @@ class BioTrainer:
             Backend responsible for implementing the selected training
             strategy.
         """
-        backend_cls = BACKEND_REGISTRY.get(
-            self.config.backend
-        )
+        backend_cls = BACKEND_REGISTRY.get(self.config.backend)
 
         if backend_cls is None:
             available = ", ".join(
@@ -1735,7 +1814,7 @@ def _monai_supervisedevaluator(
     inferer: Inferer | None = None,
     postprocessing: Transform | None = None,
     key_val_metric: dict[str, Metric] | None = None,
-    additional_metrics: dict[str, Metric] | None = None,
+    additional_val_metrics: dict[str, Metric] | None = None,
     metric_cmp_fn: Callable = default_metric_cmp_fn,
     val_handlers: Sequence | None = None,
     amp: bool = False,
@@ -1775,7 +1854,7 @@ def _monai_supervisedevaluator(
         Optional transformation applied to model outputs.
     key_val_metric
         Training metric(s) used as the main metric for comparison.
-    additional_metrics
+    additional_val_metrics
         Additional Ignite metrics attached to the engine.
     metric_cmp_fn
         Function used to compare the current metric with the best metric.
@@ -1815,7 +1894,7 @@ def _monai_supervisedevaluator(
         inferer=inferer,
         postprocessing=postprocessing,
         key_val_metric=key_val_metric,
-        additional_metrics=additional_metrics,
+        additional_metrics=additional_val_metrics,
         metric_cmp_fn=metric_cmp_fn,
         val_handlers=val_handlers,
         amp=amp,
