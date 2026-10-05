@@ -39,7 +39,12 @@ import torch.optim as toptim
 from torch.cuda import is_available as is_cuda_available
 from torch.nn.init import kaiming_normal_
 
-from monai.engines.utils import default_make_latent, default_metric_cmp_fn, default_prepare_batch
+from monai.engines.utils import (default_make_latent, 
+                                 default_metric_cmp_fn,
+                                 default_prepare_batch
+                                 )
+from monai.handlers.utils import from_engine
+from monai.handlers import IgniteMetricHandler
 # =================================
 # fastai
 # =================================
@@ -405,6 +410,74 @@ def _validate_trainer_config(config: TrainerConfig):
         "Backend",
     )
 
+# %% ../nbs/080_engines.ipynb #7d8de85c
+def _monai_metric_config(metrics):
+    """
+    Build the MONAI trainer metric configuration.
+
+    The first metric is used as the key metric for both training and
+    validation. Any remaining metrics are registered as additional metrics.
+
+    Parameters
+    ----------
+    metrics : metric or sequence of metrics or None
+        Metric instance or collection of metric instances to register.
+        The first metric is used as the key metric.
+
+    Returns
+    -------
+    dict
+        Configuration dictionary containing ``key_train_metric`` and
+        ``key_val_metric`` for the first metric, and ``additional_metrics``
+        when more than one metric is provided.
+
+    Notes
+    -----
+    Metric names are obtained from the ``name`` attribute when available.
+    If ``name`` is callable, it is called to obtain the metric name.
+    Otherwise, the metric class name is used.
+    """
+    if metrics is None:
+        return {}
+
+    metrics = (
+        metrics
+        if isinstance(metrics, (list, tuple))
+        else [metrics]
+    )
+
+    if not metrics:
+        return {}
+
+    def metric_name(metric):
+        name = getattr(metric, "name", metric.__class__.__name__.removesuffix("Metric"))
+        return name() if callable(name) else name
+
+    def wrap_handler(metric):
+        return IgniteMetricHandler(
+            metric_fn=metric, 
+            output_transform=from_engine(["pred", "label"])
+            )
+
+    key_metric = metrics[0]
+
+    values = {
+        "key_train_metric": {
+            metric_name(key_metric): wrap_handler(key_metric),
+        },
+        "key_val_metric": {
+            metric_name(key_metric): wrap_handler(key_metric),
+        },
+    }
+
+    if len(metrics) > 1:
+        values["additional_metrics"] = {
+            metric_name(metric): wrap_handler(metric)
+            for metric in metrics[1:]
+        }
+
+    return values
+
 # %% ../nbs/080_engines.ipynb #7c0082a7
 def _native_config(self) -> Dict[str, Any]:
     """
@@ -418,40 +491,6 @@ def _native_config(self) -> Dict[str, Any]:
         MONAI.
     """
     cfg = self.config
-
-    def metric_config(metrics):
-        if metrics is None:
-            return {}
-
-        metrics = (
-            metrics
-            if isinstance(metrics, (list, tuple))
-            else [metrics]
-        )
-
-        if not metrics:
-            return {}
-
-        def metric_name(metric):
-            name = getattr(metric, "name", None)
-            return name or metric.__class__.__name__.removesuffix("Metric")
-
-        values = {
-            "key_train_metric": {
-                metric_name(metrics[0]): metrics[0],
-            }
-        }
-        values["key_val_metric"] = {
-            metric_name(metrics[0]): metrics[0],
-        }
-
-        if len(metrics) > 1:
-            values["additional_metrics"] = {
-                metric_name(metric): metric
-                for metric in metrics[1:]
-            }
-
-        return values
 
     values = {
         "network": cfg.model,
@@ -467,7 +506,7 @@ def _native_config(self) -> Dict[str, Any]:
         "val_handlers": cfg.callbacks,
     }
 
-    values.update(metric_config(cfg.metrics))
+    values.update(_monai_metric_config(cfg.metrics))
     values.update(cfg.backend_kwargs)
 
     return values
@@ -632,12 +671,33 @@ def _instantiate_component(component, kwargs=None, *args):
     return component(*args, **kwargs)
 
 
+# %% ../nbs/080_engines.ipynb #002ce773
 def _instantiate_metrics(metrics, metrics_kwargs=None):
     """
     Instantiate metric classes while preserving already-created callables.
 
     Backend selection is handled by each metric through the globally
-    configured bonsai backend.
+    configured BONSAI backend.
+
+    Parameters
+    ----------
+    metrics : metric, sequence of metrics, or None
+        Metric classes or already-created metric instances.
+    metrics_kwargs : dict, sequence of dict, or None
+        Keyword arguments passed to the metrics. A single dictionary is
+        shared by all metrics. A sequence of dictionaries provides
+        per-metric keyword arguments in the same order as ``metrics``.
+
+    Returns
+    -------
+    list or None
+        Instantiated metrics, or ``None`` if ``metrics`` is ``None``.
+
+    Raises
+    ------
+    ValueError
+        If a sequence of ``metrics_kwargs`` does not have the same length
+        as ``metrics``.
     """
     if metrics is None:
         return None
@@ -645,11 +705,24 @@ def _instantiate_metrics(metrics, metrics_kwargs=None):
     if not isinstance(metrics, (list, tuple)):
         metrics = [metrics]
 
-    kwargs = metrics_kwargs or {}
+    if metrics_kwargs is None:
+        kwargs = [{} for _ in metrics]
+    elif isinstance(metrics_kwargs, dict):
+        kwargs = [metrics_kwargs] * len(metrics)
+    elif isinstance(metrics_kwargs, (list, tuple)):
+        if len(metrics_kwargs) != len(metrics):
+            raise ValueError(
+                "`metrics_kwargs` must have the same length as `metrics`."
+            )
+        kwargs = metrics_kwargs
+    else:
+        raise TypeError(
+            "`metrics_kwargs` must be a dict, list/tuple of dicts, or None."
+        )
 
     return [
-        _instantiate_component(metric, kwargs)
-        for metric in metrics
+        _instantiate_component(metric, metric_kwargs)
+        for metric, metric_kwargs in zip(metrics, kwargs)
     ]
 
 # %% ../nbs/080_engines.ipynb #a7924811
