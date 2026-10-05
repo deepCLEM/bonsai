@@ -4,7 +4,7 @@
 
 # %% auto #0
 __all__ = ['BIOCATEGORIZE_BACKENDS', 'MetaResolver', 'BioDataClass', 'BioImageBase', 'BioImage', 'BioVolume', 'BioMIP',
-           'BioVideo', 'BioMultiChannel', 'BioCategorize', 'BioLabel']
+           'BioVideo', 'BioMultiChannel', 'BioCategorize', 'BioLabel', 'BioOneHot', 'BioLabelMulti', 'BioOneHotMulti']
 
 # %% ../../nbs/021_data.core.ipynb #7a8886ba
 # =================================
@@ -17,7 +17,7 @@ from plum import dispatch
 # fastai
 # =================================
 from fastai.torch_core import TensorImage, TensorCategory, TensorMultiCategory
-from fastai.vision.all import TransformBlock, Categorize
+from fastai.vision.all import TransformBlock, Categorize, OneHotEncode, MultiCategorize
 
 # =================================
 # bonsai
@@ -25,6 +25,7 @@ from fastai.vision.all import TransformBlock, Categorize
 from ..utils import *
 from ..io import image_reader, image_reader_dict
 from ..visualize import show_biodata, show_multichannel
+from ..backend import get_backend, set_backend
 
 # =================================
 # fasttransform patch
@@ -411,20 +412,30 @@ class BioCategorize(DisplayedTransform):
         vocab=None,
         sort=True,
         add_na=False,
-        backend="monai",
+        one_hot=False,
+        is_multi=False,
+        backend=None,
     ):
-        if backend not in BIOCATEGORIZE_BACKENDS:
+        self.backend = backend or get_backend()
+        self.one_hot = one_hot
+
+        if self.backend not in BIOCATEGORIZE_BACKENDS:
             raise ValueError(
                 f"BioCategorize: unknown backend {backend!r}. "
                 f"Expected one of {set(BIOCATEGORIZE_BACKENDS)}."
             )
 
-        self.cat = Categorize(
-            vocab=vocab,
-            sort=sort,
-            add_na=add_na,
-        )
-        self.backend = backend
+        if is_multi:
+            self.cat = MultiCategorize(
+                vocab=vocab,
+                add_na=add_na,
+            )
+        else:
+            self.cat = Categorize(
+                vocab=vocab,
+                sort=sort,
+                add_na=add_na,
+            )
 
     @property
     def vocab(self):
@@ -444,9 +455,13 @@ class BioCategorize(DisplayedTransform):
 
     def encodes(self, o):
         x = self.cat(o)
+        if self.one_hot:
+            x = OneHotEncode(len(self.vocab))(x)
         return BIOCATEGORIZE_BACKENDS[self.backend](x)
 
     def decodes(self, o):
+        if self.one_hot:
+            o = OneHotEncode(len(self.vocab)).decode(o)
         return self.cat.decode(o)
 
 # %% ../../nbs/021_data.core.ipynb #d3ec8d1a
@@ -462,7 +477,6 @@ class BioLabel(BioDataClass):
     _vocab = None
     _sort = True
     _add_na = False
-    _backend = "monai"
 
     # --------------------------------------------------
     # LOADING
@@ -495,7 +509,7 @@ class BioLabel(BioDataClass):
         vocab=None,
         sort=None,
         add_na=None,
-        backend="monai",
+        backend=None,
     ):
         """Create a categorical encoder configured for this label type."""
         vocab = cls._vocab if vocab is None else vocab
@@ -520,7 +534,7 @@ class BioLabel(BioDataClass):
             vocab=kwargs.get("vocab", cls._vocab),
             sort=kwargs.get("sort", cls._sort),
             add_na=kwargs.get("add_na", cls._add_na),
-            backend=kwargs.get("backend", cls._backend),
+            backend=kwargs.get("backend", get_backend()),
         )
 
     # --------------------------------------------------
@@ -539,7 +553,7 @@ class BioLabel(BioDataClass):
             vocab=kwargs.get("vocab", cls._vocab),
             sort=kwargs.get("sort", cls._sort),
             add_na=kwargs.get("add_na", cls._add_na),
-            backend=kwargs.get("backend", cls._backend),
+            backend=kwargs.get("backend", get_backend()),
         )
 
         def _load_dict(data: dict):
@@ -560,3 +574,85 @@ class BioLabel(BioDataClass):
         _load_dict.backend = cat.backend
 
         return _load_dict
+
+# %% ../../nbs/021_data.core.ipynb #5ced56e8
+class BioOneHot(BioLabel):
+
+    # --------------------------------------------------
+    # ENCODING
+    # --------------------------------------------------
+
+    @classmethod
+    def _get_encoder(
+        cls,
+        vocab=None,
+        sort=None,
+        add_na=None,
+        backend=None,
+    ):
+        """Create a categorical encoder configured for this label type."""
+        vocab = cls._vocab if vocab is None else vocab
+        sort = cls._sort if sort is None else sort
+        add_na = cls._add_na if add_na is None else add_na
+
+        return BioCategorize(
+            vocab=vocab,
+            sort=sort,
+            add_na=add_na,
+            one_hot=True,
+            backend=backend,
+        )
+
+# %% ../../nbs/021_data.core.ipynb #37ca5928
+class BioLabelMulti(BioLabel):
+
+    # --------------------------------------------------
+    # ENCODING
+    # --------------------------------------------------
+
+    @classmethod
+    def _get_encoder(
+        cls,
+        vocab=None,
+        sort=None,
+        add_na=None,
+        backend=None,
+    ):
+        """Create a categorical encoder configured for this label type."""
+        vocab = cls._vocab if vocab is None else vocab
+        add_na = cls._add_na if add_na is None else add_na
+
+        return BioCategorize(
+            vocab=vocab,
+            add_na=add_na,
+            one_hot=False,
+            is_multi=True,
+            backend=backend,
+        )
+
+# %% ../../nbs/021_data.core.ipynb #b3a7e065
+class BioOneHotMulti(BioLabel):
+
+    # --------------------------------------------------
+    # ENCODING
+    # --------------------------------------------------
+
+    @classmethod
+    def _get_encoder(
+        cls,
+        vocab=None,
+        sort=None,
+        add_na=None,
+        backend=None,
+    ):
+        """Create a categorical encoder configured for this label type."""
+        vocab = cls._vocab if vocab is None else vocab
+        add_na = cls._add_na if add_na is None else add_na
+
+        return BioCategorize(
+            vocab=vocab,
+            add_na=add_na,
+            one_hot=True,
+            is_multi=True,
+            backend=backend,
+        )

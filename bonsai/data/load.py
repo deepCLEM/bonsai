@@ -3081,9 +3081,6 @@ class BioDataLoaders(DataLoaders):
         dataset : str, optional
             Registered dataset builder name. If omitted, it may be inferred
             from the selected task.
-        backend : str, optional
-            Backend used when loading the source. The final dataset backend
-            is inferred from the selected dataset builder.
         val_data : Any, optional
             Separate validation data. If provided, it is combined with the
             training records using the configured validation column.
@@ -3254,9 +3251,6 @@ class BioDataLoaders(DataLoaders):
             Registered task name.
         dataset : str, optional
             Registered dataset builder name.
-        backend : str, optional
-            Backend used during source loading. The final loader backend is
-            inferred from the selected dataset.
         **kwargs
             Additional pipeline, dataset, transform, or loader options.
 
