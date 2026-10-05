@@ -228,6 +228,7 @@ class BioMetric:
     """
 
     _default = None
+    _name = None
 
     @classmethod
     def _get_metric(cls, backend):
@@ -267,12 +268,19 @@ class BioMetric:
             **kwargs,
         )
 
-    @property
-    def name(self):
+    @classmethod
+    def name(cls):
         """
         Return the metric name.
+
+        Uses ``_name`` when explicitly defined; otherwise derives the name
+        from the class name by removing a trailing ``Metric`` suffix.
         """
-        return self.__class__.__name__
+        if getattr(cls, "_name", None) is not None:
+            return cls._name
+
+        name = cls.__name__
+        return name.removesuffix("Metric")
 
     def __new__(cls, *args, **kwargs):
         """

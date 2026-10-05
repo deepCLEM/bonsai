@@ -74,8 +74,6 @@ from fastcore.script import risinstance
 # =================================
 from .backend import get_backend
 from .utils import *
-from .datasets import download_medmnist
-from .optimizers import Adam
 from .callbacks import CSVLogger, ShowGraphCallback
 
 # %% auto #0
