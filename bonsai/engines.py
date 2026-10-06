@@ -1802,6 +1802,278 @@ def _monai_supervised(
     )
 
 
+# %% ../nbs/080_engines.ipynb #9b4a3016
+@register_trainer("monai", "gan")
+def _monai_gan(
+    device: str | torch.device,
+    max_epochs: int,
+    train_data_loader: DataLoader,
+    g_network: torch.nn.Module,
+    g_optimizer: Optimizer,
+    g_loss_function: Callable,
+    d_network: torch.nn.Module,
+    d_optimizer: Optimizer,
+    d_loss_function: Callable,
+    epoch_length: int | None = None,
+    g_inferer: Inferer | None = None,
+    d_inferer: Inferer | None = None,
+    d_train_steps: int = 1,
+    latent_shape: int = 64,
+    non_blocking: bool = False,
+    d_prepare_batch: Callable = default_prepare_batch,
+    g_prepare_batch: Callable = default_make_latent,
+    g_update_latents: bool = True,
+    iteration_update: Callable[[Engine, Any], Any] | None = None,
+    postprocessing: Transform | None = None,
+    key_train_metric: dict[str, Metric] | None = None,
+    additional_metrics: dict[str, Metric] | None = None,
+    metric_cmp_fn: Callable = default_metric_cmp_fn,
+    train_handlers: Sequence | None = None,
+    decollate: bool = True,
+    optim_set_to_none: bool = False,
+    to_kwargs: dict | None = None,
+    amp_kwargs: dict | None = None,
+) -> Any:
+    """
+    Construct a MONAI ``GanTrainer``.
+
+    This trainer provides MONAI's GAN-oriented training engine with
+    support for generator/discriminator optimization and the associated
+    engine workflow.
+
+    Parameters
+    ----------
+    device
+        Device on which to run the training engine.
+    max_epochs
+        Total number of epochs.
+    train_data_loader
+        PyTorch data loader used for training.
+    g_network
+        Generator network.
+    g_optimizer
+        Generator optimizer.
+    g_loss_function
+        Generator loss function.
+    d_network
+        Discriminator network.
+    d_optimizer
+        Discriminator optimizer.
+    d_loss_function
+        Discriminator loss function.
+    epoch_length
+        Number of iterations per epoch. Defaults to the length of
+        ``train_data_loader``.
+    g_inferer
+        Inference method for the generator.
+    d_inferer
+        Inference method for the discriminator.
+    d_train_steps
+        Number of discriminator updates per real-data minibatch.
+    latent_shape
+        Size of the generator input latent code.
+    non_blocking
+        Whether CPU/GPU transfers should be asynchronous.
+    d_prepare_batch
+        Callback for preparing discriminator input batches.
+    g_prepare_batch
+        Callback for generating latent input batches.
+    g_update_latents
+        Whether to generate new latent codes for the generator update.
+    iteration_update
+        Callable executed for every training iteration.
+    postprocessing
+        Transformation applied to model outputs.
+    key_train_metric
+        Main training metrics used by Ignite.
+    additional_metrics
+        Additional Ignite training metrics.
+    metric_cmp_fn
+        Function used to compare the current metric with the best value.
+    train_handlers
+        Ignite event handlers attached to the training engine.
+    decollate
+        Whether to decollate batch-first data after model computation.
+    optim_set_to_none
+        Whether optimizer gradients should be set to ``None``.
+    to_kwargs
+        Additional arguments passed to the batch preparation API.
+    amp_kwargs
+        Arguments passed to ``torch.autocast``.
+
+    Returns
+    -------
+    monai.engines.GanTrainer
+        Configured MONAI GAN training engine.
+    """
+    return _monai_trainer(
+        "GanTrainer",
+        device=device,
+        max_epochs=max_epochs,
+        train_data_loader=train_data_loader,
+        g_network=g_network,
+        g_optimizer=g_optimizer,
+        g_loss_function=g_loss_function,
+        d_network=d_network,
+        d_optimizer=d_optimizer,
+        d_loss_function=d_loss_function,
+        epoch_length=epoch_length,
+        g_inferer=g_inferer,
+        d_inferer=d_inferer,
+        d_train_steps=d_train_steps,
+        latent_shape=latent_shape,
+        non_blocking=non_blocking,
+        d_prepare_batch=d_prepare_batch,
+        g_prepare_batch=g_prepare_batch,
+        g_update_latents=g_update_latents,
+        iteration_update=iteration_update,
+        postprocessing=postprocessing,
+        key_train_metric=key_train_metric,
+        additional_metrics=additional_metrics,
+        metric_cmp_fn=metric_cmp_fn,
+        train_handlers=train_handlers,
+        decollate=decollate,
+        optim_set_to_none=optim_set_to_none,
+        to_kwargs=to_kwargs,
+        amp_kwargs=amp_kwargs,
+    )
+
+# %% ../nbs/080_engines.ipynb #7a385829
+@register_trainer("monai", "adversarial")
+def _monai_adversarial(
+    device: torch.device | str,
+    max_epochs: int,
+    train_data_loader: Iterable | DataLoader,
+    g_network: torch.nn.Module,
+    g_optimizer: Optimizer,
+    g_loss_function: Callable,
+    recon_loss_function: Callable,
+    d_network: torch.nn.Module,
+    d_optimizer: Optimizer,
+    d_loss_function: Callable,
+    epoch_length: int | None = None,
+    non_blocking: bool = False,
+    prepare_batch: Callable = default_prepare_batch,
+    iteration_update: Callable | None = None,
+    g_inferer: Inferer | None = None,
+    d_inferer: Inferer | None = None,
+    postprocessing: Transform | None = None,
+    key_train_metric: dict[str, Metric] | None = None,
+    additional_metrics: dict[str, Metric] | None = None,
+    metric_cmp_fn: Callable = default_metric_cmp_fn,
+    train_handlers: Sequence | None = None,
+    amp: bool = False,
+    event_names: list[str | EventEnum | type[EventEnum]] | None = None,
+    event_to_attr: dict | None = None,
+    decollate: bool = True,
+    optim_set_to_none: bool = False,
+    to_kwargs: dict | None = None,
+    amp_kwargs: dict | None = None,
+) -> Any:
+    """
+    Construct a MONAI ``AdversarialTrainer``.
+
+    This trainer provides MONAI's standard supervised training workflow
+    for adversarial-loss-enabled neural networks, with generator,
+    discriminator, reconstruction, and adversarial losses.
+
+    Parameters
+    ----------
+    device
+        Device on which to run the training engine.
+    max_epochs
+        Total number of epochs.
+    train_data_loader
+        Data loader used for training.
+    g_network
+        Generator network.
+    g_optimizer
+        Generator optimizer.
+    g_loss_function
+        Generator adversarial loss function.
+    recon_loss_function
+        Generator reconstruction loss function.
+    d_network
+        Discriminator network.
+    d_optimizer
+        Discriminator optimizer.
+    d_loss_function
+        Discriminator adversarial loss function.
+    epoch_length
+        Number of iterations per epoch. Defaults to the length of
+        ``train_data_loader``.
+    non_blocking
+        Whether CPU/GPU transfers should be asynchronous.
+    prepare_batch
+        Callback used to prepare the input batch.
+    iteration_update
+        Callable executed for every training iteration.
+    g_inferer
+        Inference method for the generator.
+    d_inferer
+        Inference method for the discriminator.
+    postprocessing
+        Transformation applied to model outputs.
+    key_train_metric
+        Main training metrics used by Ignite.
+    additional_metrics
+        Additional Ignite training metrics.
+    metric_cmp_fn
+        Function used to compare the current metric with the best value.
+    train_handlers
+        Ignite event handlers attached to the training engine.
+    amp
+        Whether to enable automatic mixed-precision training.
+    event_names
+        Additional custom Ignite events to register.
+    event_to_attr
+        Mapping from events to attributes added to ``engine.state``.
+    decollate
+        Whether to decollate batch-first data after model computation.
+    optim_set_to_none
+        Whether optimizer gradients should be set to ``None``.
+    to_kwargs
+        Additional arguments passed to the batch preparation API.
+    amp_kwargs
+        Arguments passed to ``torch.autocast``.
+
+    Returns
+    -------
+    monai.engines.AdversarialTrainer
+        Configured MONAI adversarial training engine.
+    """
+    return _monai_trainer(
+        "AdversarialTrainer",
+        device=device,
+        max_epochs=max_epochs,
+        train_data_loader=train_data_loader,
+        g_network=g_network,
+        g_optimizer=g_optimizer,
+        g_loss_function=g_loss_function,
+        recon_loss_function=recon_loss_function,
+        d_network=d_network,
+        d_optimizer=d_optimizer,
+        d_loss_function=d_loss_function,
+        epoch_length=epoch_length,
+        non_blocking=non_blocking,
+        prepare_batch=prepare_batch,
+        iteration_update=iteration_update,
+        g_inferer=g_inferer,
+        d_inferer=d_inferer,
+        postprocessing=postprocessing,
+        key_train_metric=key_train_metric,
+        additional_metrics=additional_metrics,
+        metric_cmp_fn=metric_cmp_fn,
+        train_handlers=train_handlers,
+        amp=amp,
+        event_names=event_names,
+        event_to_attr=event_to_attr,
+        decollate=decollate,
+        optim_set_to_none=optim_set_to_none,
+        to_kwargs=to_kwargs,
+        amp_kwargs=amp_kwargs,
+    )
+
 # %% ../nbs/080_engines.ipynb #b7d2f9db
 @register_trainer("monai", "supervised_evaluator")
 def _monai_supervisedevaluator(
@@ -1909,33 +2181,109 @@ def _monai_supervisedevaluator(
     )
 
 
-# %% ../nbs/080_engines.ipynb #a461046c
-@register_trainer("monai", "gan")
-def _monai_gan(
-    *args: Any,
-    **kwargs: Any,
+# %% ../nbs/080_engines.ipynb #d4251f7d
+@register_trainer("monai", "ensemble_evaluator")
+def _monai_ensembleevaluator(
+    device: str | torch.device,
+    val_data_loader: Iterable | DataLoader,
+    networks: Sequence[torch.nn.Module],
+    pred_keys: KeysCollection | None = None,
+    val_epoch_length: int | None = None,
+    non_blocking: bool = False,
+    prepare_batch: Callable = default_prepare_batch,
+    iteration_update: Callable[[Engine, Any], Any] | None = None,
+    inferer: Inferer | None = None,
+    postprocessing: Transform | None = None,
+    key_val_metric: dict[str, Metric] | None = None,
+    additional_val_metrics: dict[str, Metric] | None = None,
+    metric_cmp_fn: Callable = default_metric_cmp_fn,
+    val_handlers: Sequence | None = None,
+    amp: bool = False,
+    mode: ForwardMode | str = ForwardMode.EVAL,
+    event_names: list[str | EventEnum | type[EventEnum]] | None = None,
+    event_to_attr: dict | None = None,
+    decollate: bool = True,
+    to_kwargs: dict | None = None,
+    amp_kwargs: dict | None = None,
 ) -> Any:
     """
-    Construct a MONAI ``GanTrainer``.
+    Construct a MONAI ``EnsembleEvaluator``.
 
-    This trainer provides MONAI's GAN-oriented training engine with
-    support for generator/discriminator optimization and the associated
-    engine workflow.
+    This signature mirrors :class:`monai.engines.EnsembleEvaluator`.
 
     Parameters
     ----------
-    *args
-        Positional arguments forwarded to ``GanTrainer``.
-    **kwargs
-        Keyword arguments forwarded to ``GanTrainer``.
+    device
+        Device on which to run.
+    val_data_loader
+        Validation data loader.
+    networks
+        Sequence of PyTorch networks to evaluate.
+    pred_keys
+        Keys used to store predictions from each network. Defaults to
+        ``pred_{index}`` for each network.
+    val_epoch_length
+        Number of iterations per epoch. Defaults to the length of
+        ``val_data_loader``.
+    non_blocking
+        Whether data transfers should be asynchronous.
+    prepare_batch
+        Function used to prepare each batch.
+    iteration_update
+        Callable executed for each evaluation iteration.
+    inferer
+        Inference method used for network forward passes.
+    postprocessing
+        Optional transformation applied to model outputs.
+    key_val_metric
+        Main validation metric(s) used for comparison.
+    additional_val_metrics
+        Additional Ignite metrics attached to the evaluator.
+    metric_cmp_fn
+        Function used to compare the current metric with the best metric.
+    val_handlers
+        Ignite event handlers attached to the evaluator.
+    amp
+        Whether to enable automatic mixed precision.
+    mode
+        Model forward mode, either ``"eval"`` or ``"train"``.
+    event_names
+        Additional custom Ignite events.
+    event_to_attr
+        Mapping from events to engine state attributes.
+    decollate
+        Whether to decollate batch-first data after model computation.
+    to_kwargs
+        Additional keyword arguments passed to ``prepare_batch``.
+    amp_kwargs
+        Keyword arguments passed to ``torch.autocast``.
 
     Returns
     -------
-    monai.engines.GanTrainer
-        Configured MONAI GAN training engine.
+    Any
+        Configured MONAI ``EnsembleEvaluator``.
     """
     return _monai_trainer(
-        "GanTrainer",
-        *args,
-        **kwargs,
+        "EnsembleEvaluator",
+        device=device,
+        val_data_loader=val_data_loader,
+        networks=networks,
+        pred_keys=pred_keys,
+        epoch_length=val_epoch_length,
+        non_blocking=non_blocking,
+        prepare_batch=prepare_batch,
+        iteration_update=iteration_update,
+        inferer=inferer,
+        postprocessing=postprocessing,
+        key_val_metric=key_val_metric,
+        additional_metrics=additional_val_metrics,
+        metric_cmp_fn=metric_cmp_fn,
+        val_handlers=val_handlers,
+        amp=amp,
+        mode=mode,
+        event_names=event_names,
+        event_to_attr=event_to_attr,
+        decollate=decollate,
+        to_kwargs=to_kwargs,
+        amp_kwargs=amp_kwargs,
     )
