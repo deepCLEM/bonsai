@@ -36,6 +36,7 @@ from matplotlib.colors import LinearSegmentedColormap
 # PyTorch
 # =================================
 import torch.optim as toptim
+from torch.optim import Optimizer
 from torch.cuda import is_available as is_cuda_available
 from torch.nn.init import kaiming_normal_
 
@@ -60,7 +61,7 @@ from fastai.data.all import (
     hasattrs, List, L, Normalize
 )
 
-from fastai.optimizer import OptimWrapper, Optimizer
+from fastai.optimizer import OptimWrapper, Optimizer as fastaiOptimizer
 
 from fastai.vision.all import (
     Any, BypassNewMeta, ClassificationInterpretation,
@@ -1298,7 +1299,7 @@ class fastTrainer(Learner):
                  dataloaders: DataLoaders = None, # The DataLoader objects containing training and validation datasets.
                  model: callable = None, # A callable model that will be trained on the dataset.
                  loss_fn: Any | None = None, # The loss function to optimize during training. If None, defaults to a suitable default.
-                 optimizer: Optimizer | OptimWrapper = Adam, # The optimizer function to use. Defaults to Adam if not specified.
+                 optimizer: fastaiOptimizer | OptimWrapper = Adam, # The optimizer function to use. Defaults to Adam if not specified.
                  lr: float | slice = 1e-3, # Learning rate for the optimizer. Can be a float or a slice object for learning rate scheduling.
                  splitter: callable = trainable_params, # 
                  callbacks: Callback | MutableSequence | None = None, # A callable that determines which parameters of the model should be updated during training.
@@ -1442,7 +1443,7 @@ def visionTrainer(  dataloaders: DataLoaders, # The DataLoader objects containin
                     weights=None,
                     # Trainer args
                     loss_fn: Any | None = None, # The loss function to optimize during training. If None, defaults to a suitable default.
-                    optimizer: Optimizer | OptimWrapper = Adam, # The optimizer function to use. Defaults to Adam if not specified.
+                    optimizer: fastaiOptimizer | OptimWrapper = Adam, # The optimizer function to use. Defaults to Adam if not specified.
                     lr: float | slice = 1e-3, # Learning rate for the optimizer. Can be a float or a slice object for learning rate scheduling.
                     splitter: callable = trainable_params, # 
                     callbacks: Callback | MutableSequence | None = None, # A callable that determines which parameters of the model should be updated during training.
