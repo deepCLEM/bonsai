@@ -309,6 +309,7 @@ class MeanLossGraphCallback(FastaiCallback):
         epochs = range(0, len(self.nb_batches))
         self.train_losses.append(rec.log[1])
         val_losses = [v[1] for v in rec.values]
+        
         x_bounds = (0, self.n_epoch - 1)
         y_bounds = (0, max((max(Tensor(rec.losses)), max(Tensor(val_losses)))))
         ctx = plt.rc_context(self.style) if self.style else nullcontext()
