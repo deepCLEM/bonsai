@@ -41,7 +41,7 @@ from fastai.vision.all import CSVLogger
 # ---------------------------------------------------------------------
 from .backend import get_backend
 from .utils import *
-from .visualize import bonsai_style, colorlist
+from .visualize import bonsai_style, colorlist, plot_metrics
 
 
 # %% ../nbs/090_callbacks.ipynb #703f9a6d
@@ -269,14 +269,28 @@ class MonaiCallbackBackend(CallbackBackend):
 
         return callback
 
-# %% ../nbs/090_callbacks.ipynb #80514f91
+# %% ../nbs/090_callbacks.ipynb #88f67398
+GradientAccumulation = GradientAccumulation
+
+# %% ../nbs/090_callbacks.ipynb #add0cb27
+EarlyStoppingCallback = EarlyStoppingCallback
+
+# %% ../nbs/090_callbacks.ipynb #4b764f8f
+SaveModelCallback = SaveModelCallback
+
+# %% ../nbs/090_callbacks.ipynb #1b5eb715
+ReduceLROnPlateau = ReduceLROnPlateau
+
+# %% ../nbs/090_callbacks.ipynb #10a3161f
 class MeanLossGraphCallback(FastaiCallback):
     "Update a graph of training and validation loss"
     order,run_valid=65,False
 
-    def __init__(self, *args, style=bonsai_style, **kwargs):
+    def __init__(self, *args, style=bonsai_style, minimize_metrics=False, orientation="vertical", **kwargs):
         super().__init__(*args, **kwargs)
         self.style = style
+        self.minimize_metrics = minimize_metrics
+        self.orientation = orientation
 
     def before_fit(self):
         self.run = not hasattr(self.learn, 'lr_finder') and not hasattr(self, "gather_preds")
@@ -301,20 +315,18 @@ class MeanLossGraphCallback(FastaiCallback):
         with ctx:
             self.progress.mbar.update_graph([(epochs, self.train_losses), (epochs, val_losses)], x_bounds, y_bounds)
 
+    def after_fit(self):
+        if not self.run:
+            return
+        
+        plot_metrics(self.learn,
+                     style=self.style,
+                     minimize_metrics=self.minimize_metrics,
+                     orientation=self.orientation,
+        )
 
-# %% ../nbs/090_callbacks.ipynb #88f67398
-GradientAccumulation = GradientAccumulation
 
-# %% ../nbs/090_callbacks.ipynb #add0cb27
-EarlyStoppingCallback = EarlyStoppingCallback
-
-# %% ../nbs/090_callbacks.ipynb #4b764f8f
-SaveModelCallback = SaveModelCallback
-
-# %% ../nbs/090_callbacks.ipynb #1b5eb715
-ReduceLROnPlateau = ReduceLROnPlateau
-
-# %% ../nbs/090_callbacks.ipynb #fc3c851b
+# %% ../nbs/090_callbacks.ipynb #2034a7da
 class ShowGraphCallback(FastaiShowGraphCallback):
 
     def __init__(self, *args, style=bonsai_style, **kwargs):

@@ -701,10 +701,12 @@ bonsai_style = {
     )
 }
 
-# %% ../nbs/120_visualize.ipynb #c9528154
+# %% ../nbs/120_visualize.ipynb #c1ac5775
 def plot_metrics(
     learn,
     style=bonsai_style,
+    minimize_metrics=False,
+    orientation="vertical",
     **subplots_kwargs
 ):
     """
@@ -715,9 +717,19 @@ def plot_metrics(
     learn : fastai Learner
     style : dict or None
         Temporary matplotlib rcParams style.
+    minimize_metrics : bool
+        If True, metrics are minimized when determining the best epoch.
+        Otherwise, metrics are maximized.
+    orientation : {"vertical", "horizontal"}
+        Arrange plots vertically or horizontally.
     **subplots_kwargs
         Additional keyword arguments passed to plt.subplots().
     """
+
+    if orientation not in ("vertical", "horizontal"):
+        raise ValueError(
+            "orientation must be either 'vertical' or 'horizontal'"
+        )
 
     ctx = plt.rc_context(style) if style else nullcontext()
 
@@ -726,87 +738,129 @@ def plot_metrics(
         recorder = learn.recorder
         metric_names = recorder.metric_names[1:-1]
 
-        df = pd.DataFrame(recorder.values, columns=metric_names)
-        epochs = np.arange(1, len(df)+1)
+        df = pd.DataFrame(
+            recorder.values,
+            columns=metric_names
+        )
 
-        loss_cols = [c for c in df.columns if "loss" in c]
-        metric_cols = [c for c in df.columns if "loss" not in c]
+        epochs = np.arange(0, len(df))
+
+        loss_cols = [
+            c for c in df.columns
+            if "loss" in c
+        ]
+
+        metric_cols = [
+            c for c in df.columns
+            if "loss" not in c
+        ]
 
         n_plots = 1 + len(metric_cols)
 
-        # sensible defaults
-        defaults = dict(
-            figsize=(7, 4 * n_plots),
-            sharex=True
-        )
+        # --------------------------------
+        # Subplot layout
+        # --------------------------------
 
-        # user kwargs override defaults
+        if orientation == "vertical":
+            defaults = dict(
+                figsize=(7, 4 * n_plots),
+                sharex=True
+            )
+            nrows, ncols = n_plots, 1
+
+        else:
+            defaults = dict(
+                figsize=(7 * n_plots, 4),
+                sharey=False
+            )
+            nrows, ncols = 1, n_plots
+
         defaults.update(subplots_kwargs)
 
         fig, axes = plt.subplots(
-                        n_plots,
-                        1,
-                        **defaults
-                    )
+            nrows,
+            ncols,
+            **defaults
+        )
 
-        if n_plots == 1:
-            axes = [axes]
+        axes = np.atleast_1d(axes)
 
-        # -------- Loss plot --------
+        # --------------------------------
+        # Loss plot
+        # --------------------------------
 
         ax = axes[0]
 
         for col in loss_cols:
-            ax.plot(epochs, df[col], marker="o", label=col)
+            ax.plot(
+                epochs,
+                df[col],
+                marker="o",
+                label=col
+            )
 
         if "valid_loss" in df:
             best_epoch = df["valid_loss"].idxmin()
 
-            ax.axvline(best_epoch+1, linestyle="--", alpha=0.6)
+            ax.axvline(
+                best_epoch,
+                linestyle="--",
+                alpha=0.6
+            )
 
             ax.scatter(
-                best_epoch+1,
+                best_epoch,
                 df["valid_loss"][best_epoch],
                 s=80
             )
 
         ax.set_title("Training and Validation Loss")
         ax.set_ylabel("Loss")
+        ax.set_xlabel("Epoch")
         ax.legend()
         ax.grid(True)
 
-        # -------- Metrics --------
+        # --------------------------------
+        # Metrics
+        # --------------------------------
+
+        metric_color = (plt.rcParams["axes.prop_cycle"].by_key()["color"][1])
 
         for i, metric in enumerate(metric_cols):
 
-            ax = axes[i+1]
+            ax = axes[i + 1]
 
             ax.plot(
                 epochs,
                 df[metric],
                 marker="o",
+                color=metric_color,
                 label=metric
             )
 
-            best_epoch = df[metric].idxmax()
+            if minimize_metrics:
+                best_epoch = df[metric].idxmin()
+            else:
+                best_epoch = df[metric].idxmax()
 
             ax.axvline(
-                best_epoch+1,
+                best_epoch,
                 linestyle="--",
-                alpha=0.6
+                alpha=0.6,
+                color="black"
             )
 
             ax.scatter(
-                best_epoch+1,
+                best_epoch,
                 df[metric][best_epoch],
-                s=80
+                s=80,
+                color="black"
             )
 
             ax.set_title(metric)
             ax.set_ylabel(metric)
+            ax.set_xlabel("Epoch")
             ax.grid(True)
-
-        axes[-1].set_xlabel("Epoch")
 
         plt.tight_layout()
         plt.show()
