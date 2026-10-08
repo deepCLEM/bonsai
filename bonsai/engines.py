@@ -40,12 +40,17 @@ from torch.optim import Optimizer
 from torch.cuda import is_available as is_cuda_available
 from torch.nn.init import kaiming_normal_
 
+# =================================
+# MONAI
+# =================================
 from monai.engines.utils import (default_make_latent, 
                                  default_metric_cmp_fn,
                                  default_prepare_batch
                                  )
 from monai.handlers.utils import from_engine
 from monai.handlers import IgniteMetricHandler
+from monai.utils.enums import ForwardMode
+
 # =================================
 # fastai
 # =================================
@@ -716,57 +721,57 @@ def _instantiate_component(component, kwargs=None, *args):
 
 
 # %% ../nbs/080_engines.ipynb #002ce773
-def _instantiate_metrics(metrics, metrics_kwargs=None):
+def _instantiate_components(components, components_kwargs=None):
     """
-    Instantiate metric classes while preserving already-created callables.
-
-    Backend selection is handled by each metric through the globally
-    configured BONSAI backend.
+    Instantiate component classes while preserving already-created callables.
 
     Parameters
     ----------
-    metrics : metric, sequence of metrics, or None
-        Metric classes or already-created metric instances.
-    metrics_kwargs : dict, sequence of dict, or None
-        Keyword arguments passed to the metrics. A single dictionary is
-        shared by all metrics. A sequence of dictionaries provides
-        per-metric keyword arguments in the same order as ``metrics``.
+    components : component, sequence of components, or None
+        Component classes or already-created component instances.
+    components_kwargs : dict, sequence of dict, or None
+        Keyword arguments passed to the components. A single dictionary is
+        shared by all components. A sequence of dictionaries provides
+        per-component keyword arguments in the same order as ``components``.
 
     Returns
     -------
     list or None
-        Instantiated metrics, or ``None`` if ``metrics`` is ``None``.
+        Instantiated components, or ``None`` if ``components`` is ``None``.
 
     Raises
     ------
     ValueError
-        If a sequence of ``metrics_kwargs`` does not have the same length
-        as ``metrics``.
+        If a sequence of ``components_kwargs`` does not have the same length
+        as ``components``.
+    TypeError
+        If ``components_kwargs`` is neither a dictionary, a sequence of
+        dictionaries, nor ``None``.
     """
-    if metrics is None:
+    if components is None:
         return None
 
-    if not isinstance(metrics, (list, tuple)):
-        metrics = [metrics]
+    if not isinstance(components, (list, tuple)):
+        components = [components]
 
-    if metrics_kwargs is None:
-        kwargs = [{} for _ in metrics]
-    elif isinstance(metrics_kwargs, dict):
-        kwargs = [metrics_kwargs] * len(metrics)
-    elif isinstance(metrics_kwargs, (list, tuple)):
-        if len(metrics_kwargs) != len(metrics):
+    if components_kwargs is None:
+        kwargs = [{} for _ in components]
+    elif isinstance(components_kwargs, dict):
+        kwargs = [components_kwargs] * len(components)
+    elif isinstance(components_kwargs, (list, tuple)):
+        if len(components_kwargs) != len(components):
             raise ValueError(
-                "`metrics_kwargs` must have the same length as `metrics`."
+                "`components_kwargs` must have the same length as `components`."
             )
-        kwargs = metrics_kwargs
+        kwargs = components_kwargs
     else:
         raise TypeError(
-            "`metrics_kwargs` must be a dict, list/tuple of dicts, or None."
+            "`components_kwargs` must be a dict, list/tuple of dicts, or None."
         )
 
     return [
-        _instantiate_component(metric, metric_kwargs)
-        for metric, metric_kwargs in zip(metrics, kwargs)
+        _instantiate_component(component, component_kwargs)
+        for component, component_kwargs in zip(components, kwargs)
     ]
 
 # %% ../nbs/080_engines.ipynb #a7924811
@@ -943,12 +948,12 @@ class BioTrainer:
             loss_kwargs,
         )
 
-        resolved_metrics = _instantiate_metrics(
+        resolved_metrics = _instantiate_components(
             metrics,
             metrics_kwargs,
         )
 
-        resolved_val_metrics = _instantiate_metrics(
+        resolved_val_metrics = _instantiate_components(
             val_metrics,
             val_metrics_kwargs,
         )
@@ -959,12 +964,12 @@ class BioTrainer:
             model,
         )
 
-        resolved_callbacks = _instantiate_metrics(
+        resolved_callbacks = _instantiate_components(
             callbacks,
             callbacks_kwargs,
         )
 
-        resolved_val_callbacks = _instantiate_metrics(
+        resolved_val_callbacks = _instantiate_components(
             val_callbacks,
             val_callbacks_kwargs,
         )
