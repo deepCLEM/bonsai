@@ -309,22 +309,22 @@ class MeanLossGraphCallback(FastaiCallback):
         epochs = range(0, len(self.nb_batches))
         self.train_losses.append(rec.log[1])
         val_losses = [v[1] for v in rec.values]
-        
+        val_metric = [v[2] for v in rec.values]
+       
         x_bounds = (0, self.n_epoch - 1)
         y_bounds = (0, max((max(Tensor(rec.losses)), max(Tensor(val_losses)))))
         ctx = plt.rc_context(self.style) if self.style else nullcontext()
         with ctx:
+            val_color = (plt.rcParams["axes.prop_cycle"].by_key()["color"][1])
+            if not hasattr(self, 'graph_fig'):
+                        self.graph_fig, self.graph_ax = plt.subplots(1, figsize=(6,4));
+                        self.graph_out = display(self.graph_ax.figure, display_id=True);
+                        self.graph_ax.set_ylabel("Metric")
+                        self.graph_ax.set_xlabel("Epoch")
             self.progress.mbar.update_graph([(epochs, self.train_losses), (epochs, val_losses)], x_bounds, y_bounds)
+            self.graph_ax.plot(epochs, val_metric, label="metric", color=val_color)
+            self.graph_out.update(self.graph_ax.figure)
 
-    def after_fit(self):
-        if not self.run:
-            return
-        
-        plot_metrics(self.learn,
-                     style=self.style,
-                     minimize_metrics=self.minimize_metrics,
-                     orientation=self.orientation,
-        )
 
 
 # %% ../nbs/090_callbacks.ipynb #2034a7da
