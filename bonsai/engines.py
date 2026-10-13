@@ -85,7 +85,7 @@ from fastcore.script import risinstance
 # =================================
 from .backend import get_backend
 from .utils import *
-from .callbacks import CSVLogger, ShowGraphCallback
+from .callbacks import CSVLogger, MeanLossGraphCallback
 
 # %% auto #0
 __all__ = ['TrainerFactory', 'BACKEND_REGISTRY', 'TRAINER_REGISTRY', 'register_backend', 'register_trainer', 'TrainerConfig',
@@ -1325,7 +1325,7 @@ class fastTrainer(Learner):
         cbs = callbacks if callbacks is not None else []  # Ensure cbs is a list
         if default_cbs:
             if show_graph:
-                cbs.append(ShowGraphCallback())
+                cbs.append(MeanLossGraphCallback())
             if csv_log:
                 cbs.append(CSVLogger(fname='history.csv', append=False))
         
