@@ -15,11 +15,8 @@ __all__ = ['CALLBACK_BACKENDS', 'GradientAccumulation', 'EarlyStoppingCallback',
 from abc import ABC, abstractmethod
 from contextlib import nullcontext
 from typing import Any, Callable, Dict, Optional, Type
-
-# ---------------------------------------------------------------------
-# Third-party
-# ---------------------------------------------------------------------
 import matplotlib.pyplot as plt
+import numpy as np
 
 # ---------------------------------------------------------------------
 # fastai
@@ -283,49 +280,257 @@ ReduceLROnPlateau = ReduceLROnPlateau
 
 # %% ../nbs/090_callbacks.ipynb #10a3161f
 class MeanLossGraphCallback(FastaiCallback):
-    "Update a graph of training and validation loss"
-    order,run_valid=65,False
+    "Plot training/validation losses and validation metrics during training."
 
-    def __init__(self, *args, style=bonsai_style, minimize_metrics=False, orientation="vertical", **kwargs):
+    order, run_valid = 65, False
+
+    def __init__(
+        self, *args, style=bonsai_style, minimize_metrics=False,
+        orientation="vertical", **kwargs
+    ):
         super().__init__(*args, **kwargs)
+
+        if orientation not in ("vertical", "horizontal"):
+            raise ValueError(
+                "orientation must be either 'vertical' or 'horizontal'"
+            )
+
+        if isinstance(minimize_metrics, (list, tuple)):
+            if not all(isinstance(v, (bool, np.bool_)) for v in minimize_metrics):
+                raise TypeError("minimize_metrics must contain only booleans")
+            self.minimize_metrics = list(minimize_metrics)
+        elif isinstance(minimize_metrics, (bool, np.bool_)):
+            self.minimize_metrics = minimize_metrics
+        else:
+            raise TypeError(
+                "minimize_metrics must be a boolean or a list of booleans"
+            )
+
         self.style = style
-        self.minimize_metrics = minimize_metrics
         self.orientation = orientation
 
     def before_fit(self):
-        self.run = not hasattr(self.learn, 'lr_finder') and not hasattr(self, "gather_preds")
-        if not(self.run): return
+        self.run = (
+            not hasattr(self.learn, "lr_finder")
+            and not hasattr(self, "gather_preds")
+        )
+        if not self.run:
+            return
+
         self.nb_batches = []
         self.train_losses = []
-        assert hasattr(self.learn, 'progress')
+        self._metric_lines = {}
+        self._metric_names = []
+        self._graph_initialized = False
 
-    def after_train(self): 
+        assert hasattr(self.learn, "progress")
+
+    def after_train(self):
         self.nb_batches.append(self.train_iter)
 
+    def _minimize_metric(self, idx):
+        "Return whether the metric at the given index should be minimized."
+        if isinstance(self.minimize_metrics, bool):
+            return self.minimize_metrics
+
+        if idx >= len(self.minimize_metrics):
+            raise ValueError(
+                f"minimize_metrics has {len(self.minimize_metrics)} entries, "
+                f"but metric index {idx} requires an entry."
+            )
+
+        return self.minimize_metrics[idx]
+
+    def _init_graph(self, n_metrics):
+        "Initialize the loss and metric subplots once."
+        n_plots = 1 + n_metrics
+
+        if self.orientation == "vertical":
+            self.graph_fig, axes = plt.subplots(
+                n_plots, 1,
+                figsize=(7, 4 * n_plots),
+                sharex=True,
+                squeeze=False,
+            )
+        else:
+            self.graph_fig, axes = plt.subplots(
+                1, n_plots,
+                figsize=(7 * n_plots, 4),
+                squeeze=False,
+            )
+
+        self.graph_axes = axes.ravel()
+        self.graph_ax = self.graph_axes[0]
+
+        # Loss subplot
+        ax = self.graph_axes[0]
+        self.train_loss_line, = ax.plot(
+            [], [], marker="o", label="train_loss"
+        )
+        self.valid_loss_line, = ax.plot(
+            [], [], marker="o", label="valid_loss"
+        )
+
+        ax.set_title("Training and Validation Loss")
+        ax.set_ylabel("Loss")
+        ax.set_xlabel("Epoch")
+        ax.grid(True)
+        ax.legend()
+
+        # Metric subplots
+        metric_color = plt.rcParams["axes.prop_cycle"].by_key()["color"][1]
+
+        for i, name in enumerate(self._metric_names):
+            ax = self.graph_axes[i + 1]
+
+            line, = ax.plot(
+                [], [],
+                marker="o",
+                color=metric_color,
+                label=name,
+            )
+            self._metric_lines[name] = line
+
+            ax.set_title(name)
+            ax.set_ylabel(name)
+            ax.set_xlabel("Epoch")
+            ax.grid(True)
+            ax.legend()
+
+        self._graph_initialized = True
+        self.graph_out = display(self.graph_fig, display_id=True)
+        plt.close(self.graph_fig)   
+
+    def _update_best_epoch(self, ax, epochs, values, minimize=False):
+        "Update the best-epoch line and hollow marker on an axes."
+        values = np.asarray(values, dtype=float)
+        epochs = np.asarray(list(epochs))
+
+        valid = np.isfinite(values)
+        if not valid.any():
+            return
+
+        valid_values = values[valid]
+        valid_epochs = epochs[valid]
+
+        idx = (
+            np.argmin(valid_values)
+            if minimize
+            else np.argmax(valid_values)
+        )
+        best_epoch = valid_epochs[idx]
+        best_value = valid_values[idx]
+
+        if not hasattr(ax, "_best_epoch_line"):
+            ax._best_epoch_line = ax.axvline(
+                best_epoch,
+                linestyle="--",
+                color="black",
+                alpha=0.6,
+            )
+            ax._best_epoch_dot = ax.scatter(
+                [best_epoch],
+                [best_value],
+                s=80,
+                facecolors="none",
+                edgecolors="black",
+                linewidths=1.5,
+                zorder=5,
+            )
+        else:
+            ax._best_epoch_line.set_xdata(
+                [best_epoch, best_epoch]
+            )
+            ax._best_epoch_dot.set_offsets(
+                [[best_epoch, best_value]]
+            )
+
+    def _plot_losses(self, epochs, train_losses, val_losses):
+        "Update the loss subplot and mark the best validation epoch."
+        ax = self.graph_axes[0]
+
+        self.train_loss_line.set_data(epochs, train_losses)
+        self.valid_loss_line.set_data(epochs, val_losses)
+
+        self._update_best_epoch(
+            ax, epochs, val_losses, minimize=True
+        )
+
+        ax.relim()
+        ax.autoscale_view()
+
+    def _plot_metrics(self, epochs, metric_values):
+        "Update each metric subplot and mark its best epoch."
+        if not self._metric_names:
+            return
+
+        for i, name in enumerate(self._metric_names):
+            ax = self.graph_axes[i + 1]
+
+            values = [
+                row[i] if i < len(row) else np.nan
+                for row in metric_values
+            ]
+
+            self._metric_lines[name].set_data(epochs, values)
+
+            self._update_best_epoch(
+                ax,
+                epochs,
+                values,
+                minimize=self._minimize_metric(i),
+            )
+
+            ax.relim()
+            ax.autoscale_view()
+
     def after_epoch(self):
-        "Plot validation loss in the pbar graph"
-        if not self.nb_batches: return
+        "Update all subplots after each epoch."
+        if not self.run or not self.nb_batches:
+            return
+
         rec = self.learn.recorder
-        epochs = range(0, len(self.nb_batches))
-        self.train_losses.append(rec.log[1])
-        val_losses = [v[1] for v in rec.values]
-        val_metric = [v[2] for v in rec.values]
-       
-        x_bounds = (0, self.n_epoch - 1)
-        y_bounds = (0, max((max(Tensor(rec.losses)), max(Tensor(val_losses)))))
+
+        # Recorder values: train_loss, valid_loss, metric_1, ...
+        values = rec.values
+        epochs = np.arange(len(values))
+
+        train_losses = list(self.train_losses)
+        train_losses.append(rec.log[1])
+
+        val_losses = [v[1] for v in values]
+        metric_values = [v[2:] for v in values]
+
+        # Metric names exclude epoch, losses, and time.
+        metric_names = list(rec.metric_names[3:-1])
+
+        # Fall back to generic names if recorder names are unavailable.
+        n_metrics = max(
+            (len(row) for row in metric_values),
+            default=0,
+        )
+        metric_names = [
+            metric_names[i] if i < len(metric_names)
+            else f"Metric {i + 1}"
+            for i in range(n_metrics)
+        ]
+        self._metric_names = metric_names
+
         ctx = plt.rc_context(self.style) if self.style else nullcontext()
+
         with ctx:
-            val_color = (plt.rcParams["axes.prop_cycle"].by_key()["color"][1])
-            if not hasattr(self, 'graph_fig'):
-                        self.graph_fig, self.graph_ax = plt.subplots(1, figsize=(6,4));
-                        self.graph_out = display(self.graph_ax.figure, display_id=True);
-                        self.graph_ax.set_ylabel("Metric")
-                        self.graph_ax.set_xlabel("Epoch")
-            self.progress.mbar.update_graph([(epochs, self.train_losses), (epochs, val_losses)], x_bounds, y_bounds)
-            self.graph_ax.plot(epochs, val_metric, label="metric", color=val_color)
-            self.graph_out.update(self.graph_ax.figure)
+            if not self._graph_initialized:
+                self._init_graph(n_metrics)
 
+            self.train_losses = train_losses
 
+            self._plot_losses(
+                epochs, train_losses, val_losses
+            )
+            self._plot_metrics(epochs, metric_values)
+
+            self.graph_fig.tight_layout()
+            self.graph_out.update(self.graph_fig)
 
 # %% ../nbs/090_callbacks.ipynb #2034a7da
 class ShowGraphCallback(FastaiShowGraphCallback):
