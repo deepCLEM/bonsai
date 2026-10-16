@@ -21,6 +21,9 @@ import time
 from collections import OrderedDict, defaultdict
 from html import escape
 from threading import RLock
+import csv
+from pathlib import Path
+import warnings
 
 from IPython.display import HTML, display
 
@@ -559,6 +562,9 @@ class StatsHandler:
         Update the table after every training iteration.
     epoch_log : bool
         Finalize the table row after each epoch.
+    valid_every : int
+        Run/display validation statistics every N training epochs. This is
+        used for display scheduling; evaluator timing is measured directly.
     output_transform : callable, optional
         Transform the engine output before extracting the loss.
         Automatic extraction is used when omitted.
@@ -575,6 +581,13 @@ class StatsHandler:
         best epoch. A scalar boolean applies to all metrics.
     orientation : {"vertical", "horizontal"}
         Arrange the plot subplots vertically or horizontally.
+    figsize : tuple, optional
+        Base figure size. The size is scaled with the number of subplots.
+    save_csv : bool or str or Path
+        Save the final table to CSV. ``True`` uses ``training_stats.csv``;
+        a path-like value selects a custom output path.
+    save_png : bool or str or Path
+        Save the final figure to PNG. ``True`` uses ``training_stats.png``.
     """
 
     def __init__(
@@ -582,6 +595,7 @@ class StatsHandler:
         evaluator: Engine | None = None,
         iteration_log=True,
         epoch_log=True,
+        valid_every=1,
         output_transform=None,
         key_metric=None,
         title="Training statistics",
@@ -590,8 +604,19 @@ class StatsHandler:
         minimize_metrics=False,
         orientation="horizontal",
         figsize=None,
+        save_csv=False,
+        save_png=False,
     ):
         store_attr()
+
+        if not isinstance(valid_every, (int, np.integer)) or isinstance(valid_every, (bool, np.bool_)):
+            raise TypeError("valid_every must be a positive integer")
+        if valid_every < 1:
+            raise ValueError("valid_every must be >= 1")
+
+        for name, value in (("save_csv", save_csv), ("save_png", save_png)):
+            if not isinstance(value, (bool, str, Path)):
+                raise TypeError(f"{name} must be a boolean, string, or Path")
 
         if evaluator is not None:
             self.attach_evaluator(evaluator)
@@ -626,13 +651,25 @@ class StatsHandler:
         self._notebook = bool(in_notebook())
         self._display_handle = None
         self._rows = OrderedDict()
-        self._columns = ["epoch", "iteration", "loss", "Time"]
+        self._columns = [
+            "epoch", "iteration", "loss", "val_loss",
+            "Train time", "Val time", "Epoch time",
+        ]
 
         self._current_epoch = None
         self._current_row = None
         self._epoch_start = None
         self._iteration_in_epoch = 0
         self._epoch_losses = []
+        self._last_iteration_time = None
+        self._train_epoch_elapsed = 0.0
+        self._epoch_elapsed = 0.0
+        self._validation_start = None
+        self._validation_elapsed = None
+        self._validation_epochs = []
+        self._training_start = None
+        self._total_elapsed = None
+        self._summary_displayed = False
 
         # Plot state
         self._plot_history = OrderedDict()
@@ -648,6 +685,7 @@ class StatsHandler:
         self.val_metrics: defaultdict = defaultdict(list)
         self.metric_transform = lambda x: x
         self.iteration = 0
+        self._best_summary = None
 
     # ------------------------------------------------------------------
     # Scalar conversion and loss extraction
@@ -673,8 +711,9 @@ class StatsHandler:
 
     @classmethod
     def _format(cls, value):
+        """Format a scalar with six decimal places."""
         value = cls._scalar(value)
-        return f"{value:.5f}" if value is not None else "—"
+        return f"{value:.6f}" if value is not None else "—"
 
     @classmethod
     def _mean_std(cls, values):
@@ -684,7 +723,7 @@ class StatsHandler:
         if not len(values):
             return "—"
 
-        return f"{values.mean():.5f} ± {values.std():.5f}"
+        return f"{values.mean():.6f} ± {values.std():.6f}"
 
     def _extract_loss(self, output):
         """
@@ -734,21 +773,23 @@ class StatsHandler:
     # ------------------------------------------------------------------
 
     def _metric_columns(self):
-        reserved = {"epoch", "iteration", "loss", "val_loss", "Time"}
+        """Build a stable display order for losses, metrics, and timings."""
+        reserved = {
+            "epoch", "iteration", "loss", "val_loss", "Train time",
+            "Val time", "Epoch time", "Time", "_train_elapsed",
+            "_val_elapsed", "_epoch_elapsed",
+        }
         metrics = [c for c in self._columns if c not in reserved]
 
-        # Keep each training metric next to its validation counterpart.
         ordered = []
         for name in metrics:
             if name.startswith("val_"):
                 continue
-
             ordered.append(name)
             val_name = f"val_{name}"
             if val_name in metrics:
                 ordered.append(val_name)
 
-        # Include validation-only metrics.
         for name in metrics:
             if name.startswith("val_") and name not in ordered:
                 ordered.append(name)
@@ -758,8 +799,8 @@ class StatsHandler:
             ordered.insert(0, self.key_metric)
 
         self._columns = [
-            "epoch", "iteration", "loss", "val_loss",
-            *ordered, "Time"
+            "epoch", "iteration", "loss", "val_loss", *ordered,
+            "Train time", "Val time", "Epoch time",
         ]
 
     def _render(self):
@@ -775,7 +816,13 @@ class StatsHandler:
                 for col in self._columns
             ])
 
-        html = f"<h4>{escape(self.title)}</h4>" + text2html_table(data)
+        html = (
+            "<style>.bonsai-stats table tr:last-child td "
+            "{font-weight: bold;}</style>"
+            f"<div class='bonsai-stats'><h4>{escape(self.title)}</h4>"
+            + text2html_table(data)
+            + "</div>"
+        )
 
         if self._display_handle is None:
             self._display_handle = display(
@@ -795,7 +842,9 @@ class StatsHandler:
 
     def attach(self, engine: Engine):
         "Attach the handler to an Ignite engine."
+        engine.add_event_handler(Events.STARTED, self.training_started)
         engine.add_event_handler(Events.EPOCH_STARTED, self.epoch_started)
+        engine.add_event_handler(Events.COMPLETED, self.training_completed)
 
         if self.iteration_log:
             engine.add_event_handler(
@@ -816,67 +865,273 @@ class StatsHandler:
         Args:
             evaluator: Ignite Engine implementing network evaluation
         """
+        evaluator.add_event_handler(Events.STARTED, self.validation_started)
         evaluator.add_event_handler(Events.EPOCH_COMPLETED, self.log_metrics)
+        evaluator.add_event_handler(Events.COMPLETED, self.validation_completed)
+
+    def training_started(self, engine: Engine):
+        """Record wall-clock start time for the complete training run."""
+        self._training_start = time.perf_counter()
+        self._total_elapsed = None
+        self._summary_displayed = False
+
+    def validation_started(self, engine: Engine):
+        """Start timing an evaluator run."""
+        self._validation_start = time.perf_counter()
+        self._validation_elapsed = None
+
+    def validation_completed(self, engine: Engine):
+        """Record evaluator duration and update the matching epoch row."""
+        if self._validation_start is None:
+            return
+
+        self._validation_elapsed = time.perf_counter() - self._validation_start
+        self._validation_start = None
+        epoch = self._current_epoch
+        if epoch is None or epoch not in self._rows:
+            return
+
+        row = self._rows[epoch]
+        row["Val time"] = self._format_time(self._validation_elapsed)
+        row["_val_elapsed"] = self._validation_elapsed
+        if self._current_row is not None and self._current_epoch == epoch:
+            self._current_row["Val time"] = row["Val time"]
+            self._current_row["_val_elapsed"] = self._validation_elapsed
+
+        self._render()
+        if self.plot and epoch in self._plot_history:
+            previous = self._plot_history[epoch]
+            self._update_graph(
+                epoch=epoch,
+                train_loss=previous["train_loss"],
+                metrics=previous["metrics"],
+                validation_due=True,
+            )
+
+    @staticmethod
+    def _format_time(seconds):
+        """Format elapsed time with millisecond precision."""
+        if seconds is None:
+            return "—"
+        seconds = max(0.0, float(seconds))
+        if seconds < 60:
+            return f"{seconds:.3f} s"
+        if seconds < 3600:
+            minutes = int(seconds // 60)
+            secs = seconds - 60 * minutes
+            return f"{minutes}m {secs:06.3f}s"
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = seconds % 60
+        return f"{hours}h {minutes}m {secs:06.3f}s"
 
     def log_metrics(self, engine: Engine):
-        """
-        Log metrics from the given Engine's state member.
+        """Record evaluator metrics for the epoch being validated."""
+        epoch = self._current_epoch
+        if epoch is None:
+            epoch = getattr(engine.state, "epoch", None)
+        if epoch is not None and (
+            not self._validation_epochs or self._validation_epochs[-1] != epoch
+        ):
+            self._validation_epochs.append(epoch)
 
-        Args:
-            engine: Ignite Engine to log from
-        """
-        with RLock():
-            for name, raw_value in engine.state.metrics.items():
-                name = str(name)
+        for name, raw_value in (getattr(engine.state, "metrics", {}) or {}).items():
+            name = str(name)
+            value = self.metric_transform(raw_value)
+            normalized = name.lower()
 
-                value = self.metric_transform(raw_value)
+            if normalized in {"loss", "val_loss", "valid_loss", "validation_loss"}:
+                self.val_loss.append(value)
+                if epoch in self._rows and epoch % self.valid_every == 0:
+                    self._rows[epoch]["val_loss"] = self._format(value)
+                continue
 
-                if name.lower() in {
-                    "loss", "val_loss", "valid_loss", "validation_loss"
-                }:
-                    self.val_loss.append(value)
-                    continue
+            self.val_metrics[name].append(value)
+            val_name = f"val_{name}"
+            if val_name not in self._columns:
+                self._columns.append(val_name)
+            if epoch in self._rows and epoch % self.valid_every == 0:
+                self._rows[epoch][val_name] = self._format(value)
 
-                self.val_metrics[name].append(value)
+        self._render()
 
-                val_name = f"val_{name}"
-                if val_name not in self._columns:
-                    self._columns.append(val_name)
+    def training_completed(self, engine: Engine):
+        """Finalize total runtime, display the summary, and save outputs."""
+        if self._training_start is not None:
+            self._total_elapsed = time.perf_counter() - self._training_start
+        self._show_summary()
+        self._save_table()
+        self._save_figure()
 
-                # Update the current epoch row when available.
-                if self._current_row is not None:
-                    self._current_row[val_name] = self._format(value)
+    def _show_summary(self):
+        """Display best validation results and append a summary table row."""
+        if self._summary_displayed:
+            return
+        self._summary_displayed = True
+
+        lines = ["Training summary", f"Total time: {self._format_time(self._total_elapsed)}"]
+        best_idx = best_epoch = None
+        best_metric_name = best_value = None
+
+        if self.key_metric and self.key_metric in self.val_metrics:
+            metric_name = self.key_metric
+            values = self.val_metrics[metric_name]
+            minimize = self._minimize_metric(0)
+        elif self.val_loss:
+            metric_name, values, minimize = "val_loss", self.val_loss, True
+        elif self.val_metrics:
+            metric_name = next(iter(self.val_metrics))
+            values = self.val_metrics[metric_name]
+            minimize = self._minimize_metric(0)
+        else:
+            metric_name, values, minimize = None, [], True
+
+        if values:
+            numeric = [(i, self._scalar(v)) for i, v in enumerate(values)]
+            numeric = [(i, value) for i, value in numeric if value is not None]
+            if numeric:
+                best_idx, best_value = (
+                    min(numeric, key=lambda pair: pair[1])
+                    if minimize else max(numeric, key=lambda pair: pair[1])
+                )
+                best_epoch = (
+                    self._validation_epochs[best_idx]
+                    if best_idx < len(self._validation_epochs)
+                    else best_idx + 1
+                )
+                best_metric_name = metric_name
+                lines.append(
+                    f"Best epoch ({metric_name}): {best_epoch}, {best_value:.6f}"
+                )
+                for name, metric_values in self.val_metrics.items():
+                    if best_idx < len(metric_values):
+                        value = self._scalar(metric_values[best_idx])
+                        if value is not None:
+                            lines.append(f"  {name}: {value:.6f}")
+                if best_idx < len(self.val_loss):
+                    value = self._scalar(self.val_loss[best_idx])
+                    if value is not None:
+                        lines.append(f"  val_loss: {value:.6f}")
+        else:
+            lines.append("No validation metrics were recorded.")
+
+        # Add a final row to the table. Internal numeric durations are kept
+        # separately so the displayed summary can be exported consistently.
+        train_total = sum(
+            float(row.get("_train_elapsed", 0.0) or 0.0)
+            for key, row in self._rows.items() if isinstance(key, (int, np.integer))
+        )
+        val_total = sum(
+            float(row.get("_val_elapsed", 0.0) or 0.0)
+            for key, row in self._rows.items() if isinstance(key, (int, np.integer))
+        )
+        epoch_total = sum(
+            float(row.get("_epoch_elapsed", 0.0) or 0.0)
+            for key, row in self._rows.items() if isinstance(key, (int, np.integer))
+        )
+        last_epoch_row = next(
+            (row for key, row in reversed(self._rows.items())
+             if isinstance(key, (int, np.integer))), {}
+        )
+        summary_row = {
+            "epoch": "Summary",
+            "iteration": f"Best epoch: {best_epoch}" if best_epoch is not None else "—",
+            "loss": last_epoch_row.get("loss", "—"),
+            "val_loss": "—",
+            "Train time": self._format_time(train_total),
+            "Val time": self._format_time(val_total),
+            "Epoch time": self._format_time(epoch_total),
+            "_train_elapsed": train_total,
+            "_val_elapsed": val_total,
+            "_epoch_elapsed": epoch_total,
+        }
+        if best_idx is not None:
+            for name, metric_values in self.val_metrics.items():
+                if best_idx < len(metric_values):
+                    summary_row[f"val_{name}"] = self._format(metric_values[best_idx])
+            if best_idx < len(self.val_loss):
+                summary_row["val_loss"] = self._format(self.val_loss[best_idx])
+            if best_metric_name and best_metric_name != "val_loss":
+                summary_row[f"val_{best_metric_name}"] = self._format(best_value)
+
+        self._rows["Summary"] = summary_row
+        self._metric_columns()
+        self._render()
+
+        summary = "\n".join(lines)
+        if self._notebook:
+            display(HTML("<pre>" + escape(summary) + "</pre>"))
+        else:
+            print(summary)
+
+    @staticmethod
+    def _resolve_save_path(option, default_name):
+        """Resolve an enabled save option to a path and create its parent."""
+        if option is False or option is None:
+            return None
+        path = Path(default_name if option is True else option).expanduser()
+        if path.suffix == "":
+            path = path.with_suffix(Path(default_name).suffix)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _save_table(self):
+        """Export the statistics table to CSV when requested."""
+        path = self._resolve_save_path(self.save_csv, "training_stats.csv")
+        if path is None:
+            return
+        self._metric_columns()
+        with path.open("w", newline="", encoding="utf-8-sig") as file:
+            writer = csv.DictWriter(file, fieldnames=self._columns, extrasaction="ignore")
+            writer.writeheader()
+            for row in self._rows.values():
+                writer.writerow({col: row.get(col, "—") for col in self._columns})
+
+    def _save_figure(self):
+        """Save the final training plot when requested."""
+        path = self._resolve_save_path(self.save_png, "training_stats.png")
+        if path is None:
+            return
+        if self._graph_fig is None:
+            warnings.warn("save_png was enabled, but plot=False or no plot was created.", UserWarning)
+            return
+        self._graph_fig.savefig(path, dpi=300, bbox_inches="tight", format="png")
 
     def epoch_started(self, engine: Engine):
-        """Initialize the row and loss accumulator for a new epoch."""
+        """Initialize the epoch row and start the epoch wall-clock timer."""
         state = engine.state
-
         self._current_epoch = state.epoch
         self._epoch_start = time.perf_counter()
+        self._last_iteration_time = None
+        self._train_epoch_elapsed = 0.0
+        self._epoch_elapsed = 0.0
+        self._validation_elapsed = None
         self._iteration_in_epoch = 0
         self._epoch_losses = []
 
         max_epochs = state.max_epochs or "?"
+        epoch_length = state.epoch_length or "?"
         self._current_row = {
             "epoch": f"{state.epoch}/{max_epochs}",
-            "iteration": f"0/{state.epoch_length or '?'}",
+            "iteration": f"0/{epoch_length}",
             "loss": "—",
             "val_loss": "—",
-            "Time": "0.0 s",
+            "Train time": "—",
+            "Val time": "—",
+            "Epoch time": "—",
+            "_train_elapsed": 0.0,
+            "_val_elapsed": 0.0,
+            "_epoch_elapsed": 0.0,
         }
-
         self._rows[state.epoch] = self._current_row.copy()
 
     def iteration_completed(self, engine: Engine):
-        "Update the current epoch row after every iteration."
+        """Update loss and iteration-level timing after a training iteration."""
         state = engine.state
-
-        # Defensive fallback if EPOCH_STARTED was not observed.
         if self._current_epoch != state.epoch or self._current_row is None:
             self.epoch_started(engine)
 
         self._iteration_in_epoch += 1
-
         loss = self._extract_loss(state.output)
         if loss is not None:
             self._epoch_losses.append(loss)
@@ -884,97 +1139,89 @@ class StatsHandler:
 
         max_epochs = state.max_epochs or "?"
         total_iterations = state.epoch_length or "?"
-
         self._current_row["epoch"] = f"{state.epoch}/{max_epochs}"
-        self._current_row["iteration"] = (
-            f"{self._iteration_in_epoch}/{total_iterations}"
-        )
-        self._current_row["Time"] = (
-            f"{time.perf_counter() - self._epoch_start:.1f} s"
-        )
+        self._current_row["iteration"] = f"{self._iteration_in_epoch}/{total_iterations}"
 
+        self._last_iteration_time = time.perf_counter()
+        self._train_epoch_elapsed = max(0.0, self._last_iteration_time - self._epoch_start)
+        self._current_row["Train time"] = self._format_time(self._train_epoch_elapsed)
+        self._current_row["_train_elapsed"] = self._train_epoch_elapsed
         self._update_row()
 
     def epoch_completed(self, engine: Engine):
-        "Finalize the current row and update the plots."
+        """Finalize epoch statistics, including full epoch wall-clock time."""
         state = engine.state
-
         if self._current_row is None:
             self.epoch_started(engine)
 
-        # Final training loss: mean ± population standard deviation.
+        row = self._current_row
+        epoch = state.epoch
+        now = time.perf_counter()
+
+        # This includes training, evaluator execution, and callbacks completed
+        # between EPOCH_STARTED and this handler's EPOCH_COMPLETED callback.
+        self._epoch_elapsed = max(0.0, now - self._epoch_start) if self._epoch_start is not None else 0.0
+        row["Epoch time"] = self._format_time(self._epoch_elapsed)
+        row["_epoch_elapsed"] = self._epoch_elapsed
+
         if self._epoch_losses:
-            self._current_row["loss"] = self._mean_std(
-                self._epoch_losses
-            )
+            row["loss"] = self._mean_std(self._epoch_losses)
 
-        if self.val_loss:
-            self._current_row["val_loss"] = self._format(self.val_loss[-1])
+        if self._last_iteration_time is not None and self._epoch_start is not None:
+            self._train_epoch_elapsed = max(0.0, self._last_iteration_time - self._epoch_start)
+        row["Train time"] = self._format_time(self._train_epoch_elapsed) if self._last_iteration_time is not None else "—"
+        row["_train_elapsed"] = self._train_epoch_elapsed
 
-        # Metrics available on this engine at epoch completion.
-        raw_metrics = state.metrics or {}
+        validation_due = self._validation_due(epoch)
+        if validation_due:
+            if self.val_loss:
+                row["val_loss"] = self._format(self.val_loss[-1])
+            if self._validation_elapsed is not None:
+                row["Val time"] = self._format_time(self._validation_elapsed)
+                row["_val_elapsed"] = self._validation_elapsed
+            for name, values in self.val_metrics.items():
+                if values:
+                    row[f"val_{name}"] = self._format(values[-1])
+
+        raw_metrics = getattr(state, "metrics", {}) or {}
         metrics = OrderedDict()
-
         for name, raw_value in raw_metrics.items():
+            normalized = str(name).lower()
+            if normalized.startswith("val_") or normalized in {"val_loss", "valid_loss", "validation_loss"}:
+                continue
             value = self._scalar(raw_value)
             if value is None:
                 continue
-
             metrics[name] = value
-
             if name not in self._columns:
                 self._columns.append(name)
-
-            self._current_row[name] = self._format(value)
+            row[name] = self._format(value)
 
         if self.key_metric is None and metrics:
             self.key_metric = next(iter(metrics))
 
-        # Add the latest validation metrics to the table.
-        for name, values in self.val_metrics.items():
-            val_name = f"val_{name}"
-
-            if val_name not in self._columns:
-                self._columns.append(val_name)
-
-            if values:
-                self._current_row[val_name] = self._format(values[-1])
-
         max_epochs = state.max_epochs or "?"
-        total_iterations = (
-            state.epoch_length or self._iteration_in_epoch or state.iteration
-        )
-
-        self._current_row["epoch"] = f"{state.epoch}/{max_epochs}"
-        self._current_row["iteration"] = (
-            f"{self._iteration_in_epoch}/{total_iterations}"
-        )
-        self._current_row["Time"] = (
-            f"{time.perf_counter() - self._epoch_start:.1f} s"
-        )
-
-        self._rows[state.epoch] = self._current_row.copy()
+        total_iterations = state.epoch_length or self._iteration_in_epoch or state.iteration or "?"
+        row["epoch"] = f"{epoch}/{max_epochs}"
+        row["iteration"] = f"{self._iteration_in_epoch}/{total_iterations}"
+        self._rows[epoch] = row.copy()
         self._metric_columns()
         self._render()
 
-        # Plot once per completed epoch.
         if self.plot:
-            train_loss = (
-                float(np.mean(self._epoch_losses))
-                if self._epoch_losses else None
-            )
+            train_loss = float(np.mean(self._epoch_losses)) if self._epoch_losses else None
             self._update_graph(
-                epoch=state.epoch,
+                epoch=epoch,
                 train_loss=train_loss,
                 metrics=metrics,
+                validation_due=validation_due,
             )
 
-        # Keep the completed row; the next EPOCH_STARTED creates a new one.
         self._current_row = None
 
-    # ------------------------------------------------------------------
-    # Plot helpers
-    # ------------------------------------------------------------------
+    def _validation_due(self, epoch):
+        """Return whether validation is scheduled for this training epoch."""
+        return epoch % self.valid_every == 0
 
     def _minimize_metric(self, idx):
         "Return whether the metric at the given index should be minimized."
@@ -1108,7 +1355,7 @@ class StatsHandler:
             self._graph_out = display(fig, display_id=True)
             plt.close(fig)
 
-    def _update_graph(self, epoch, train_loss, metrics):
+    def _update_graph(self, epoch, train_loss, metrics, validation_due=True):
         "Store and plot training and validation statistics."
         if not self.plot:
             return
@@ -1128,18 +1375,16 @@ class StatsHandler:
                 train_metrics[name] = value
 
         # Get the latest validation loss.
-        val_loss = (
-            self._scalar(self.val_loss[-1])
-            if self.val_loss else None
-        )
-
-        # Get the latest validation metric for each name.
+        val_loss = None
         val_metrics = OrderedDict()
-        for name, values in self.val_metrics.items():
-            if values:
-                value = self._scalar(values[-1])
-                if value is not None:
-                    val_metrics[name] = value
+        if validation_due:
+            if self.val_loss:
+                val_loss = self._scalar(self.val_loss[-1])
+            for name, values in self.val_metrics.items():
+                if values:
+                    value = self._scalar(values[-1])
+                    if value is not None:
+                        val_metrics[name] = value
 
         # Preserve existing metric order, adding new training/validation metrics.
         names = list(self._plot_metric_names)
@@ -1187,7 +1432,13 @@ class StatsHandler:
             val_losses = series("val_loss")
 
             self._train_loss_line.set_data(epochs, train_losses)
-            self._valid_loss_line.set_data(epochs, val_losses)
+            valid_loss_points = [
+                (e, v) for e, v in zip(epochs, val_losses) if np.isfinite(v)
+            ]
+            self._valid_loss_line.set_data(
+                [p[0] for p in valid_loss_points],
+                [p[1] for p in valid_loss_points],
+            )
 
             # Prefer validation loss for best-epoch selection.
             best_losses = (
@@ -1211,7 +1462,13 @@ class StatsHandler:
                 val_values = series("val_metrics", name)
 
                 lines["train"].set_data(epochs, train_values)
-                lines["val"].set_data(epochs, val_values)
+                valid_points = [
+                    (e, v) for e, v in zip(epochs, val_values) if np.isfinite(v)
+                ]
+                lines["val"].set_data(
+                    [p[0] for p in valid_points],
+                    [p[1] for p in valid_points],
+                )
 
                 # Prefer validation metrics for best-epoch selection.
                 best_values = (
@@ -1231,6 +1488,7 @@ class StatsHandler:
 
             self._graph_fig.tight_layout()
             self._graph_out.update(self._graph_fig)
+
 
 
 # %% ../nbs/090_callbacks.ipynb #2034a7da

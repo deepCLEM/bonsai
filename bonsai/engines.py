@@ -1601,8 +1601,11 @@ def _monai_attach_logger(self):
         "title": "Training statistics",
         "plot": True,
         "minimize_metrics": False,
+        "valid_every": self.config.valid_every,
         "orientation": "horizontal",
         "figsize": None,
+        "save_csv": False,
+        "save_png": False,
     }
 
     # Override defaults with user-provided StatsHandler arguments.
