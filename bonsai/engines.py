@@ -49,15 +49,12 @@ from monai.engines.utils import (default_make_latent,
                                  )
 from monai.handlers.utils import from_engine
 from monai.handlers import IgniteMetricHandler
+from monai.metrics import LossMetric
 from monai.utils.enums import ForwardMode
 
 # =================================
 # fastai
 # =================================
-# import fastai.losses
-# import fastai.metrics
-# import fastai.optimizer
-
 from fastai.callback.core import Callback
 from fastai.callback.all import *
 
@@ -427,7 +424,7 @@ def _validate_trainer_config(config: TrainerConfig):
     )
 
 # %% ../nbs/080_engines.ipynb #7d8de85c
-def _monai_metric_config(metrics, val_metrics=None):
+def _monai_metric_config(metrics, val_metrics=None, loss=None):
     """
     Build the MONAI trainer metric configuration.
 
@@ -435,9 +432,9 @@ def _monai_metric_config(metrics, val_metrics=None):
     validation metric is used as ``key_val_metric``. Remaining metrics are
     registered as additional metrics.
 
-    If ``val_metrics`` is not provided, ``metrics`` is used for validation.
-    ``val_metrics`` may also be provided independently when ``metrics`` is
-    ``None``.
+    If ``val_metrics`` is not provided, ``metrics`` is used as the validation
+    metrics. If ``loss`` is provided, it is wrapped in a MONAI ``LossMetric``
+    and appended to the validation metrics.
 
     Parameters
     ----------
@@ -448,12 +445,16 @@ def _monai_metric_config(metrics, val_metrics=None):
         Metric instance or collection of metric instances to register for
         validation. The first metric is used as the key validation metric.
         If ``None``, ``metrics`` is used as the validation metrics.
+    loss : callable or None
+        Loss function used to compute the validation loss. If provided, it is
+        wrapped in a MONAI ``LossMetric`` and appended to the validation
+        metrics.
 
     Returns
     -------
     dict
         MONAI trainer metric configuration. Depending on the supplied
-        metrics, this may contain ``key_train_metric``,
+        metrics and loss, this may contain ``key_train_metric``,
         ``key_val_metric``, ``additional_metrics``, and
         ``additional_val_metrics``.
 
@@ -465,7 +466,9 @@ def _monai_metric_config(metrics, val_metrics=None):
     suffix removed.
 
     Each metric is wrapped in an ``IgniteMetricHandler`` using the
-    ``pred`` and ``label`` outputs from the engine.
+    ``pred`` and ``label`` outputs from the engine. If ``loss`` is provided,
+    a MONAI ``LossMetric`` is appended to the validation metrics to track
+    validation loss using the same engine outputs.
     """
     def metric_name(metric):
         name = getattr(
@@ -484,25 +487,25 @@ def _monai_metric_config(metrics, val_metrics=None):
     def as_list(metrics):
         if metrics is None:
             return None
-        return (
-            list(metrics)
-            if isinstance(metrics, (list, tuple))
-            else [metrics]
-        )
+        return list(metrics) if isinstance(metrics, (list, tuple)) else [metrics]
 
     metrics = as_list(metrics)
     val_metrics = as_list(val_metrics)
 
     if val_metrics is None:
-        val_metrics = metrics
+        val_metrics = list(metrics) if metrics else []
+
+    # Append validation loss as a MONAI LossMetric.
+    if loss is not None:
+        val_metrics.append(
+            LossMetric(loss_fn=loss)
+        )
 
     values = {}
 
     if metrics:
-        key_metric = metrics[0]
-
         values["key_train_metric"] = {
-            metric_name(key_metric): wrap_handler(key_metric),
+            metric_name(metrics[0]): wrap_handler(metrics[0]),
         }
 
         if len(metrics) > 1:
@@ -512,10 +515,8 @@ def _monai_metric_config(metrics, val_metrics=None):
             }
 
     if val_metrics:
-        key_val_metric = val_metrics[0]
-
         values["key_val_metric"] = {
-            metric_name(key_val_metric): wrap_handler(key_val_metric),
+            metric_name(val_metrics[0]): wrap_handler(val_metrics[0]),
         }
 
         if len(val_metrics) > 1:
@@ -555,7 +556,7 @@ def _native_config(self) -> Dict[str, Any]:
         "val_handlers": cfg.val_callbacks,
     }
 
-    values.update(_monai_metric_config(cfg.metrics, cfg.val_metrics))
+    values.update(_monai_metric_config(cfg.metrics, cfg.val_metrics, cfg.loss))
     values.update(cfg.backend_kwargs)
 
     return values
@@ -1573,27 +1574,43 @@ def _monai_attach_validation(self):
 
 # %% ../nbs/080_engines.ipynb #74035b917db85868
 def _monai_attach_logger(self):
-    """
-    Attach logger to the MONAI training engine.
+    """Attach a statistics handler to the MONAI training engine.
+
+    Create and attach a ``StatsHandler`` to the trainer to display live
+    training statistics and optionally plot training and validation losses
+    and metrics.
+
+    Handler arguments are read from ``backend_kwargs["logger"]``.
+    Any supplied arguments override the default configuration.
+
+    Notes
+    -----
+    The evaluator is passed to the statistics handler to collect validation
+    losses and metrics. All ``StatsHandler`` options can be customized through
+    ``logger``, including iteration and epoch logging, plotting
+    style, subplot orientation, and metric optimization direction.
     """
     from bonsai.callbacks import StatsHandler
 
-    evaluator = self.evaluator
-    epoch_log = self.config.backend_kwargs.get("epoch_level", True)
+    kwargs = {
+        "evaluator": self.evaluator,
+        "iteration_log": True,
+        "epoch_log": True,
+        "output_transform": None,
+        "key_metric": None,
+        "title": "Training statistics",
+        "plot": True,
+        "minimize_metrics": False,
+        "orientation": "horizontal",
+        "figsize": None,
+    }
 
-    stats_handler = StatsHandler(
-        evaluator=evaluator,
-        iteration_log=True,
-        epoch_log=epoch_log,
-        output_transform=None,
-        key_metric=None,
-        title="Training statistics",
-        plot=True,
-        # style=bonsai_style,
-        minimize_metrics=False,
-        orientation="horizontal",
-        figsize=None,
-    )
+    # Override defaults with user-provided StatsHandler arguments.
+    backend_kwargs = self.config.backend_kwargs or {}
+    stats_kwargs = backend_kwargs.get("logger", {})
+    kwargs.update(stats_kwargs)
+
+    stats_handler = StatsHandler(**kwargs)
     stats_handler.attach(self.trainer)
 
 # %% ../nbs/080_engines.ipynb #2779810c
