@@ -18,11 +18,10 @@ from typing import Any, Callable, Dict, Optional, Type
 import matplotlib.pyplot as plt
 import numpy as np
 import time
-from collections import OrderedDict
-from contextlib import nullcontext
+from collections import OrderedDict, defaultdict
 from html import escape
+from threading import RLock
 
-import torch
 from IPython.display import HTML, display
 
 # ---------------------------------------------------------------------
@@ -545,7 +544,7 @@ class MeanLossGraphCallback(FastaiCallback):
             self.graph_fig.tight_layout()
             self.graph_out.update(self.graph_fig)
 
-# %% ../nbs/090_callbacks.ipynb #57417f9f
+# %% ../nbs/090_callbacks.ipynb #e3f32b1561f8702
 class StatsHandler:
     """
     Display live training statistics in a Jupyter HTML table and optionally
@@ -580,6 +579,7 @@ class StatsHandler:
 
     def __init__(
         self,
+        evaluator: Engine | None = None,
         iteration_log=True,
         epoch_log=True,
         output_transform=None,
@@ -589,12 +589,21 @@ class StatsHandler:
         style=bonsai_style,
         minimize_metrics=False,
         orientation="horizontal",
+        figsize=None,
     ):
         store_attr()
+
+        if evaluator is not None:
+            self.attach_evaluator(evaluator)
 
         if orientation not in ("vertical", "horizontal"):
             raise ValueError(
                 "orientation must be either 'vertical' or 'horizontal'"
+            )
+
+        if self.figsize is None:
+            self.figsize = (
+                (7, 4) if orientation == "horizontal" else (7, 4)
             )
 
         if isinstance(minimize_metrics, (bool, np.bool_)):
@@ -634,6 +643,12 @@ class StatsHandler:
         self._graph_axes = []
         self._metric_lines = {}
 
+        self.loss: list = []
+        self.val_loss: list = []
+        self.val_metrics: defaultdict = defaultdict(list)
+        self.metric_transform = lambda x: x
+        self.iteration = 0
+
     # ------------------------------------------------------------------
     # Scalar conversion and loss extraction
     # ------------------------------------------------------------------
@@ -641,7 +656,7 @@ class StatsHandler:
     @staticmethod
     def _scalar(value):
         "Convert a scalar tensor or numeric value to a finite float."
-        if isinstance(value, torch.Tensor):
+        if isinstance(value, torchTensor):
             if value.numel() != 1:
                 return None
             value = value.detach().item()
@@ -719,14 +734,33 @@ class StatsHandler:
     # ------------------------------------------------------------------
 
     def _metric_columns(self):
-        reserved = {"epoch", "iteration", "loss", "Time"}
+        reserved = {"epoch", "iteration", "loss", "val_loss", "Time"}
         metrics = [c for c in self._columns if c not in reserved]
 
-        if self.key_metric in metrics:
-            metrics.remove(self.key_metric)
-            metrics.insert(0, self.key_metric)
+        # Keep each training metric next to its validation counterpart.
+        ordered = []
+        for name in metrics:
+            if name.startswith("val_"):
+                continue
 
-        self._columns = ["epoch", "iteration", "loss", *metrics, "Time"]
+            ordered.append(name)
+            val_name = f"val_{name}"
+            if val_name in metrics:
+                ordered.append(val_name)
+
+        # Include validation-only metrics.
+        for name in metrics:
+            if name.startswith("val_") and name not in ordered:
+                ordered.append(name)
+
+        if self.key_metric in ordered:
+            ordered.remove(self.key_metric)
+            ordered.insert(0, self.key_metric)
+
+        self._columns = [
+            "epoch", "iteration", "loss", "val_loss",
+            *ordered, "Time"
+        ]
 
     def _render(self):
         if not self._notebook:
@@ -775,8 +809,46 @@ class StatsHandler:
                 self.epoch_completed,
             )
 
+    def attach_evaluator(self, evaluator: Engine):
+        """
+        Attach event  handlers to the given evaluator to log metric values from it.
+
+        Args:
+            evaluator: Ignite Engine implementing network evaluation
+        """
+        evaluator.add_event_handler(Events.EPOCH_COMPLETED, self.log_metrics)
+
+    def log_metrics(self, engine: Engine):
+        """
+        Log metrics from the given Engine's state member.
+
+        Args:
+            engine: Ignite Engine to log from
+        """
+        with RLock():
+            for name, raw_value in engine.state.metrics.items():
+                name = str(name)
+
+                value = self.metric_transform(raw_value)
+
+                if name.lower() in {
+                    "loss", "val_loss", "valid_loss", "validation_loss"
+                }:
+                    self.val_loss.append(value)
+                    continue
+
+                self.val_metrics[name].append(value)
+
+                val_name = f"val_{name}"
+                if val_name not in self._columns:
+                    self._columns.append(val_name)
+
+                # Update the current epoch row when available.
+                if self._current_row is not None:
+                    self._current_row[val_name] = self._format(value)
+
     def epoch_started(self, engine: Engine):
-        "Initialize the row and loss accumulator for a new epoch."
+        """Initialize the row and loss accumulator for a new epoch."""
         state = engine.state
 
         self._current_epoch = state.epoch
@@ -789,6 +861,7 @@ class StatsHandler:
             "epoch": f"{state.epoch}/{max_epochs}",
             "iteration": f"0/{state.epoch_length or '?'}",
             "loss": "—",
+            "val_loss": "—",
             "Time": "0.0 s",
         }
 
@@ -835,6 +908,9 @@ class StatsHandler:
                 self._epoch_losses
             )
 
+        if self.val_loss:
+            self._current_row["val_loss"] = self._format(self.val_loss[-1])
+
         # Metrics available on this engine at epoch completion.
         raw_metrics = state.metrics or {}
         metrics = OrderedDict()
@@ -853,6 +929,16 @@ class StatsHandler:
 
         if self.key_metric is None and metrics:
             self.key_metric = next(iter(metrics))
+
+        # Add the latest validation metrics to the table.
+        for name, values in self.val_metrics.items():
+            val_name = f"val_{name}"
+
+            if val_name not in self._columns:
+                self._columns.append(val_name)
+
+            if values:
+                self._current_row[val_name] = self._format(values[-1])
 
         max_epochs = state.max_epochs or "?"
         total_iterations = (
@@ -949,70 +1035,71 @@ class StatsHandler:
             )
 
     def _init_graph(self, metric_names):
-        "Initialize the loss and metric subplots."
+        "Initialize loss and metric subplots with training and validation lines."
         n_plots = 1 + len(metric_names)
 
-        with (
-            plt.rc_context(self.style)
-            if self.style else nullcontext()
-        ):
+        with (plt.rc_context(self.style) if self.style else nullcontext()):
             if self.orientation == "vertical":
                 fig, axes = plt.subplots(
                     n_plots, 1,
-                    figsize=(7, 4 * n_plots),
+                    figsize=(self.figsize[0], self.figsize[1] * n_plots),
                     sharex=True,
                     squeeze=False,
                 )
             else:
                 fig, axes = plt.subplots(
                     1, n_plots,
-                    figsize=(7 * n_plots, 4),
+                    figsize=(self.figsize[0] * n_plots, self.figsize[1]),
                     squeeze=False,
                 )
 
-            fig.suptitle(self.title, fontsize=16, fontweight="bold", ha="left", x=0)
+            fig.suptitle(
+                self.title, fontsize=16, fontweight="bold", ha="left", x=0
+            )
 
             self._graph_fig = fig
             self._graph_axes = axes.ravel()
 
-            # Loss subplot.
+            # Loss subplot
             ax = self._graph_axes[0]
             self._train_loss_line, = ax.plot(
-                [], [], marker="o", label="train_loss"
+                [], [], marker="o", linestyle="--", label="train_loss"
             )
             self._valid_loss_line, = ax.plot(
-                [], [], marker="o", label="valid_loss"
+                [], [], marker="o", label="val_loss"
             )
 
             ax.set_title("Loss")
             ax.set_ylabel("Loss")
             ax.set_xlabel("Epoch")
             ax.grid(True)
-            # ax.legend()
+            ax.legend()
 
-            # Metric subplots.
-            colors = plt.rcParams[
-                "axes.prop_cycle"
-            ].by_key()["color"]
-            metric_color = colors[1 % len(colors)]
-
+            # Metric subplots
             self._metric_lines = {}
 
             for i, name in enumerate(metric_names):
                 ax = self._graph_axes[i + 1]
-                line, = ax.plot(
-                    [], [],
-                    marker="o",
-                    color=metric_color,
-                    label=str(name),
+
+                train_line, = ax.plot(
+                    [], [], marker="o", linestyle="--",
+                    label=f"train_{name}",
                 )
-                self._metric_lines[name] = line
+                val_line, = ax.plot(
+                    [], [], marker="o",
+                    label=f"val_{name}",
+                )
+
+                self._metric_lines[name] = {
+                    "train": train_line,
+                    "val": val_line,
+                }
 
                 ax.set_title(str(name))
                 ax.set_ylabel(str(name))
                 ax.set_xlabel("Epoch")
                 ax.grid(True)
-                # ax.legend()
+                ax.legend()
 
             self._plot_metric_names = list(metric_names)
             self._plot_signature = tuple(metric_names)
@@ -1022,39 +1109,52 @@ class StatsHandler:
             plt.close(fig)
 
     def _update_graph(self, epoch, train_loss, metrics):
-        "Store epoch statistics and update the live plots."
+        "Store and plot training and validation statistics."
         if not self.plot:
             return
 
-        # Separate validation loss from the other metrics.
-        val_loss = None
-        metric_values = OrderedDict()
-
+        # Extract training metrics, excluding validation values.
+        train_metrics = OrderedDict()
         for name, value in metrics.items():
             normalized = str(name).lower()
 
             if normalized in {
-                "val_loss",
-                "valid_loss",
-                "validation_loss",
-            }:
-                val_loss = value
-            else:
-                metric_values[name] = value
+                "loss", "val_loss", "valid_loss", "validation_loss"
+            } or normalized.startswith("val_"):
+                continue
 
-        # Keep existing metric order and append newly discovered metrics.
-        names = list(self._plot_metric_names)
-        names.extend(
-            name for name in metric_values if name not in names
+            value = self._scalar(value)
+            if value is not None:
+                train_metrics[name] = value
+
+        # Get the latest validation loss.
+        val_loss = (
+            self._scalar(self.val_loss[-1])
+            if self.val_loss else None
         )
+
+        # Get the latest validation metric for each name.
+        val_metrics = OrderedDict()
+        for name, values in self.val_metrics.items():
+            if values:
+                value = self._scalar(values[-1])
+                if value is not None:
+                    val_metrics[name] = value
+
+        # Preserve existing metric order, adding new training/validation metrics.
+        names = list(self._plot_metric_names)
+        for name in (*train_metrics.keys(), *val_metrics.keys()):
+            if name not in names:
+                names.append(name)
 
         self._plot_history[epoch] = {
             "train_loss": train_loss,
             "val_loss": val_loss,
-            "metrics": metric_values,
+            "metrics": train_metrics,
+            "val_metrics": val_metrics,
         }
 
-        # Reinitialize if the metric set changes.
+        # Rebuild the figure when new metrics appear.
         if self._plot_signature != tuple(names):
             if self._graph_fig is not None:
                 plt.close(self._graph_fig)
@@ -1062,52 +1162,67 @@ class StatsHandler:
 
         epochs = list(self._plot_history)
 
-        train_losses = [
-            np.nan if self._plot_history[e]["train_loss"] is None
-            else self._plot_history[e]["train_loss"]
-            for e in epochs
-        ]
-        val_losses = [
-            np.nan if self._plot_history[e]["val_loss"] is None
-            else self._plot_history[e]["val_loss"]
-            for e in epochs
-        ]
+        def series(key, metric=None):
+            values = []
+            for e in epochs:
+                item = self._plot_history[e]
+
+                if metric is None:
+                    value = item[key]
+                else:
+                    value = item[key].get(metric)
+
+                values.append(np.nan if value is None else value)
+
+            return values
 
         with (
             plt.rc_context(self.style)
             if self.style else nullcontext()
         ):
-            # Loss subplot.
+            # Loss subplot
             ax = self._graph_axes[0]
+
+            train_losses = series("train_loss")
+            val_losses = series("val_loss")
+
             self._train_loss_line.set_data(epochs, train_losses)
             self._valid_loss_line.set_data(epochs, val_losses)
 
+            # Prefer validation loss for best-epoch selection.
+            best_losses = (
+                val_losses
+                if np.isfinite(val_losses).any()
+                else train_losses
+            )
             self._update_best_epoch(
-                ax, epochs, val_losses, minimize=True
+                ax, epochs, best_losses, minimize=True
             )
 
             ax.relim()
             ax.autoscale_view()
 
-            # Metric subplots.
+            # Metric subplots
             for idx, name in enumerate(self._plot_metric_names):
                 ax = self._graph_axes[idx + 1]
+                lines = self._metric_lines[name]
 
-                values = [
-                    self._plot_history[e]["metrics"].get(name, np.nan)
-                    for e in epochs
-                ]
-                values = [
-                    np.nan if value is None else value
-                    for value in values
-                ]
+                train_values = series("metrics", name)
+                val_values = series("val_metrics", name)
 
-                self._metric_lines[name].set_data(epochs, values)
+                lines["train"].set_data(epochs, train_values)
+                lines["val"].set_data(epochs, val_values)
 
+                # Prefer validation metrics for best-epoch selection.
+                best_values = (
+                    val_values
+                    if np.isfinite(val_values).any()
+                    else train_values
+                )
                 self._update_best_epoch(
                     ax,
                     epochs,
-                    values,
+                    best_values,
                     minimize=self._minimize_metric(idx),
                 )
 

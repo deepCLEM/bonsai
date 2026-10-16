@@ -1571,6 +1571,31 @@ def _monai_attach_validation(self):
     )
     validation_handler.attach(self.trainer)
 
+# %% ../nbs/080_engines.ipynb #74035b917db85868
+def _monai_attach_logger(self):
+    """
+    Attach logger to the MONAI training engine.
+    """
+    from bonsai.callbacks import StatsHandler
+
+    evaluator = self.evaluator
+    epoch_log = self.config.backend_kwargs.get("epoch_level", True)
+
+    stats_handler = StatsHandler(
+        evaluator=evaluator,
+        iteration_log=True,
+        epoch_log=epoch_log,
+        output_transform=None,
+        key_metric=None,
+        title="Training statistics",
+        plot=True,
+        # style=bonsai_style,
+        minimize_metrics=False,
+        orientation="horizontal",
+        figsize=None,
+    )
+    stats_handler.attach(self.trainer)
+
 # %% ../nbs/080_engines.ipynb #2779810c
 def _monai_build_trainer(self):
     """
@@ -1617,6 +1642,8 @@ class MonaiTrainerBackend(TrainerBackend):
             self.evaluator = self._build_evaluator()
             self._attach_validation()
 
+        self._attach_logger()
+
     @property
     def recorder(self):
         return self.trainer.state
@@ -1639,6 +1666,7 @@ class MonaiTrainerBackend(TrainerBackend):
 MonaiTrainerBackend._build_trainer = _monai_build_trainer
 MonaiTrainerBackend._build_evaluator = _monai_build_evaluator
 MonaiTrainerBackend._attach_validation = _monai_attach_validation
+MonaiTrainerBackend._attach_logger = _monai_attach_logger
 # MonaiTrainerBackend.validate = _monai_validate
 # MonaiTrainerBackend.predict = _monai_predict
 
