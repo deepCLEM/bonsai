@@ -1205,10 +1205,7 @@ def _fastai_validate(self):
         Validation result.
     """
     if hasattr(self.trainer, "validate"):
-        return self.trainer.validate()
-
-    if self.evaluator is not None:
-        return self.evaluator.validate()
+        return self.trainer.get_preds()
 
     raise RuntimeError(
         f"Trainer {type(self.trainer).__name__!r} does not provide "
@@ -1239,7 +1236,7 @@ def _fastai_predict(self, *args, **kwargs):
             "a prediction interface."
         )
 
-    return self.trainer.predict(*args, **kwargs)
+    return self.trainer.get_preds(*args, **kwargs)
 
 # %% ../nbs/080_engines.ipynb #5b7c2202
 @register_backend("fastai")
@@ -1572,6 +1569,26 @@ def _monai_attach_validation(self):
     )
     validation_handler.attach(self.trainer)
 
+# %% ../nbs/080_engines.ipynb #5358835eb6c10a2d
+def _monai_validate(self):
+    """
+    Run validation using the configured monai evaluator.
+
+    Returns
+    -------
+    Any
+        Validation result.
+    """
+
+    if hasattr(self, "evaluator"):
+        return self.evaluator.run()
+
+    raise RuntimeError(
+        f"Trainer {type(self.trainer).__name__!r} does not provide "
+        "a validation interface."
+    )
+
+
 # %% ../nbs/080_engines.ipynb #74035b917db85868
 def _monai_attach_logger(self):
     """Attach a statistics handler to the MONAI training engine.
@@ -1687,7 +1704,7 @@ MonaiTrainerBackend._build_trainer = _monai_build_trainer
 MonaiTrainerBackend._build_evaluator = _monai_build_evaluator
 MonaiTrainerBackend._attach_validation = _monai_attach_validation
 MonaiTrainerBackend._attach_logger = _monai_attach_logger
-# MonaiTrainerBackend.validate = _monai_validate
+MonaiTrainerBackend.validate = _monai_validate
 # MonaiTrainerBackend.predict = _monai_predict
 
 # %% ../nbs/080_engines.ipynb #f271a07a

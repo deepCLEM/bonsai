@@ -212,6 +212,8 @@ def show_multichannel(
 
     ax.axis('off')
 
+    plt.show()
+
     return ax
 
 # %% ../nbs/120_visualize.ipynb #cdc50b00
@@ -1036,7 +1038,7 @@ def plot_roc_curve_with_std(
     title="ROC curve with cross-validation"
 ):
     """
-    Plot ROC curves across CV folds with mean ROC and ±1 std band.
+    Plot ROC curves across CV folds with mean ROC and ﷿﷿﷿﷿﷿﷿1 std band.
 
     Parameters
     ----------
@@ -1106,7 +1108,7 @@ def plot_roc_curve_with_std(
         mean_tpr,
         color="red",
         lw=2,
-        label=f"Mean ROC (AUC = {mean_auc:.2f} ± {std_auc:.2f})"
+        label=f"Mean ROC (AUC = {mean_auc:.2f} ﷿﷿﷿﷿﷿﷿ {std_auc:.2f})"
     )
 
     # ---------------------------------------------------------------------
@@ -1118,7 +1120,7 @@ def plot_roc_curve_with_std(
         np.minimum(mean_tpr + std_tpr, 1),
         color="grey",
         alpha=0.2,
-        label="±1 std. dev."
+        label="﷿﷿﷿﷿﷿﷿1 std. dev."
     )
 
     # ---------------------------------------------------------------------
@@ -1191,7 +1193,7 @@ def plot_roc_curve_with_std_interactive(
         x=fpr_grid,
         y=mean_tpr,
         mode="lines",
-        name=f"Mean ROC (AUC={mean_auc:.2f} ± {std_auc:.2f})",
+        name=f"Mean ROC (AUC={mean_auc:.2f} ﷿﷿﷿﷿﷿﷿ {std_auc:.2f})",
         line=dict(width=3, color="red")
     ))
 
@@ -1203,7 +1205,7 @@ def plot_roc_curve_with_std_interactive(
         fillcolor="rgba(128,128,128,0.2)",
         line=dict(color="rgba(255,255,255,0)"),
         hoverinfo="skip",
-        name="±1 std. dev."
+        name="﷿﷿﷿﷿﷿﷿1 std. dev."
     ))
 
     # Chance line

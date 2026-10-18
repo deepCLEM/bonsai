@@ -1393,7 +1393,11 @@ class BaseSource:
                     self.kwargs["keys"] = keys
 
                 if self.kwargs.get("vocab") is None:
-                    labels = [d["label"] for d in self.data]
+                    label_keys = keys if keys is not None else cls._keys
+                    if isinstance(label_keys, str):
+                        label_keys = [label_keys]
+
+                    labels = [d[key] for d in self.data for key in label_keys]
 
                     vocab = CategoryMap(
                         labels,

@@ -555,6 +555,12 @@ class StatsHandler:
 
     One table row is maintained per epoch. The row is updated at each
     training iteration and finalized when the epoch completes.
+    Final epoch and run durations use Ignite's ``engine.state.times``.
+    Epoch time includes validation and epoch-completion callbacks. It is
+    finalized at the next epoch start or run completion, after Ignite updates
+    its timing dictionary. The summary reports the complete run duration,
+    including overhead outside individual epochs.
+    Live iteration timings use a monotonic clock.
 
     Parameters
     ----------
@@ -885,7 +891,9 @@ class StatsHandler:
         if self._validation_start is None:
             return
 
-        self._validation_elapsed = time.perf_counter() - self._validation_start
+        self._validation_elapsed = self._engine_time(
+            engine, Events.COMPLETED, self._validation_start
+        )
         self._validation_start = None
         epoch = self._current_epoch
         if epoch is None or epoch not in self._rows:
@@ -894,6 +902,8 @@ class StatsHandler:
         row = self._rows[epoch]
         row["Val time"] = self._format_time(self._validation_elapsed)
         row["_val_elapsed"] = self._validation_elapsed
+        row["_epoch_elapsed"] = row["_train_elapsed"] + self._validation_elapsed
+        row["Epoch time"] = self._format_time(row["_epoch_elapsed"])
         if self._current_row is not None and self._current_epoch == epoch:
             self._current_row["Val time"] = row["Val time"]
             self._current_row["_val_elapsed"] = self._validation_elapsed
@@ -907,6 +917,16 @@ class StatsHandler:
                 metrics=previous["metrics"],
                 validation_due=True,
             )
+
+    @staticmethod
+    def _engine_time(engine, event, started=None):
+        """Read a completed Ignite duration, falling back to a monotonic timer."""
+        seconds = StatsHandler._scalar(
+            (getattr(engine.state, "times", None) or {}).get(event.name)
+        )
+        if seconds is not None and seconds >= 0:
+            return seconds
+        return max(0.0, time.perf_counter() - started) if started is not None else None
 
     @staticmethod
     def _format_time(seconds):
@@ -955,10 +975,23 @@ class StatsHandler:
 
         self._render()
 
+    def _finalize_epoch_time(self, engine: Engine):
+        """Read the previous epoch duration after all completion handlers ran."""
+        row = self._rows.get(self._current_epoch)
+        if row is None:
+            return
+        elapsed = self._engine_time(engine, Events.EPOCH_COMPLETED)
+        if elapsed is not None:
+            row["_epoch_elapsed"] = elapsed
+            row["Epoch time"] = self._format_time(elapsed)
+            self._epoch_elapsed = elapsed
+
     def training_completed(self, engine: Engine):
         """Finalize total runtime, display the summary, and save outputs."""
-        if self._training_start is not None:
-            self._total_elapsed = time.perf_counter() - self._training_start
+        self._finalize_epoch_time(engine)
+        self._total_elapsed = self._engine_time(
+            engine, Events.COMPLETED, self._training_start
+        )
         self._show_summary()
         self._save_table()
         self._save_figure()
@@ -1029,15 +1062,23 @@ class StatsHandler:
             float(row.get("_epoch_elapsed", 0.0) or 0.0)
             for key, row in self._rows.items() if isinstance(key, (int, np.integer))
         )
+        # Use the same full-run duration as the text summary. It also includes
+        # STARTED handlers and work between epochs.
+        if self._total_elapsed is not None:
+            epoch_total = self._total_elapsed
         last_epoch_row = next(
             (row for key, row in reversed(self._rows.items())
              if isinstance(key, (int, np.integer))), {}
         )
+        selected_row = (
+            self._rows.get(best_epoch, {})
+            if best_epoch is not None else last_epoch_row
+        )
         summary_row = {
             "epoch": "Summary",
             "iteration": f"Best epoch: {best_epoch}" if best_epoch is not None else "—",
-            "loss": last_epoch_row.get("loss", "—"),
-            "val_loss": "—",
+            "loss": selected_row.get("loss", "—"),
+            "val_loss": selected_row.get("val_loss", "—"),
             "Train time": self._format_time(train_total),
             "Val time": self._format_time(val_total),
             "Epoch time": self._format_time(epoch_total),
@@ -1045,7 +1086,18 @@ class StatsHandler:
             "_val_elapsed": val_total,
             "_epoch_elapsed": epoch_total,
         }
-        if best_idx is not None:
+        # Keep every statistic aligned with the selected epoch. Missing values
+        # stay missing rather than being borrowed from a different epoch.
+        self._metric_columns()
+        reserved = {
+            "epoch", "iteration", "Train time", "Val time", "Epoch time",
+        }
+        for name in self._columns:
+            if name not in reserved:
+                summary_row[name] = selected_row.get(name, "—")
+
+        # Validation history can still provide results if no table row exists.
+        if best_idx is not None and not selected_row:
             for name, metric_values in self.val_metrics.items():
                 if best_idx < len(metric_values):
                     summary_row[f"val_{name}"] = self._format(metric_values[best_idx])
@@ -1099,6 +1151,7 @@ class StatsHandler:
 
     def epoch_started(self, engine: Engine):
         """Initialize the epoch row and start the epoch wall-clock timer."""
+        self._finalize_epoch_time(engine)
         state = engine.state
         self._current_epoch = state.epoch
         self._epoch_start = time.perf_counter()
@@ -1149,27 +1202,28 @@ class StatsHandler:
         self._update_row()
 
     def epoch_completed(self, engine: Engine):
-        """Finalize epoch statistics, including full epoch wall-clock time."""
+        """Finalize epoch statistics using Ignite completion timing."""
         state = engine.state
         if self._current_row is None:
             self.epoch_started(engine)
 
         row = self._current_row
         epoch = state.epoch
-        now = time.perf_counter()
-
-        # This includes training, evaluator execution, and callbacks completed
-        # between EPOCH_STARTED and this handler's EPOCH_COMPLETED callback.
-        self._epoch_elapsed = max(0.0, now - self._epoch_start) if self._epoch_start is not None else 0.0
+        # Ignite publishes this before EPOCH_COMPLETED handlers execute.
+        self._epoch_elapsed = self._engine_time(
+            engine, Events.EPOCH_COMPLETED, self._epoch_start
+        )
         row["Epoch time"] = self._format_time(self._epoch_elapsed)
         row["_epoch_elapsed"] = self._epoch_elapsed
 
         if self._epoch_losses:
             row["loss"] = self._mean_std(self._epoch_losses)
 
-        if self._last_iteration_time is not None and self._epoch_start is not None:
-            self._train_epoch_elapsed = max(0.0, self._last_iteration_time - self._epoch_start)
-        row["Train time"] = self._format_time(self._train_epoch_elapsed) if self._last_iteration_time is not None else "—"
+        self._train_epoch_elapsed = self._epoch_elapsed
+        self._epoch_elapsed += self._validation_elapsed or 0.0
+        row["_epoch_elapsed"] = self._epoch_elapsed
+        row["Epoch time"] = self._format_time(self._epoch_elapsed)
+        row["Train time"] = self._format_time(self._train_epoch_elapsed)
         row["_train_elapsed"] = self._train_epoch_elapsed
 
         validation_due = self._validation_due(epoch)
@@ -1488,8 +1542,6 @@ class StatsHandler:
 
             self._graph_fig.tight_layout()
             self._graph_out.update(self._graph_fig)
-
-
 
 # %% ../nbs/090_callbacks.ipynb #2034a7da
 class ShowGraphCallback(FastaiShowGraphCallback):
