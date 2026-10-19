@@ -11,7 +11,7 @@ __all__ = ['delegates', 'hasattrs', 'List', 'L', 'Any', 'store_attr', 'BypassNew
            'dict2string', 'route_kwargs', 'read_yaml', 'read_args_from_yaml', 'dictlist_to_funclist',
            'add_columns_to_csv', 'ColSplitter', 'TrainTestSplitter', 'FuncSplitter', 'IndexSplitter', 'NameSplitter',
            'RandomSplitter', 'GrandparentSplitter', 'ParentSplitter', 'FileSplitter', 'TargetedTransform',
-           'apply_transforms', 'TestLearner']
+           'apply_transforms', 'compute_losses', 'compute_metric', 'calculate_statistics', 'TestLearner']
 
 # %% ../nbs/000_utils.ipynb #f6eab00d
 # =================================
@@ -1017,6 +1017,40 @@ def apply_transforms(image, transforms):
             image2 = apply_transform_to_image(image2, t)
 
     return image1, image2
+
+# %% ../nbs/000_utils.ipynb #540034f0e249fe27
+def compute_losses(predictions, targets, loss_fn):
+    """
+    Compute the loss for each prediction-target pair.
+    """
+    return [loss_fn(p.unsqueeze(0), t.unsqueeze(0)).item() for p, t in zip(predictions, targets)]
+
+
+def compute_metric(predictions, targets, metric_fn):
+    """
+    Compute the metric for each prediction-target pair.
+    Handles cases where metric_fn has or does not have a 'func' attribute.
+    """
+    # Get the actual function to call (either metric_fn.func or metric_fn itself)
+    metric_func = getattr(metric_fn, 'func', metric_fn)
+
+    return [metric_func(p.unsqueeze(0), t.unsqueeze(0)).item() for p, t in zip(predictions, targets)]
+
+
+def calculate_statistics(data):
+    """
+    Calculate key statistics for the data.
+    """
+    import numpy as np
+    return {
+        "Mean": np.mean(data),
+        "Median": np.median(data),
+        "Standard Deviation": np.std(data),
+        "Min": np.min(data),
+        "Max": np.max(data),
+        "Q1": np.percentile(data, 25),
+        "Q3": np.percentile(data, 75),
+    }
 
 # %% ../nbs/000_utils.ipynb #f3a86217
 class TestLearner:
