@@ -7,11 +7,11 @@
 # Standard library
 # =================================
 
-from __future__ import annotations 
+from __future__ import annotations
 
-import inspect 
-from abc import ABC, abstractmethod 
-from dataclasses import dataclass, field 
+import inspect
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Mapping, Optional, Type
 from pathlib import Path
 
@@ -44,7 +44,7 @@ from torch.nn.init import kaiming_normal_
 # =================================
 # MONAI
 # =================================
-from monai.engines.utils import (default_make_latent, 
+from monai.engines.utils import (default_make_latent,
                                  default_metric_cmp_fn,
                                  default_prepare_batch
                                  )
@@ -68,7 +68,7 @@ from fastai.optimizer import OptimWrapper, Optimizer as fastaiOptimizer
 
 from fastai.vision.all import (
     Any, BypassNewMeta, ClassificationInterpretation,
-    DataBlock, DisplayedTransform, Learner, 
+    DataBlock, DisplayedTransform, Learner,
     create_vision_model, create_timm_model, default_split,
     get_c, ifnone, minimum, model_meta, slide, steep, store_attr, valley
 )
@@ -84,6 +84,7 @@ from fastcore.script import risinstance
 from .backend import get_backend
 from .utils import *
 from .callbacks import CSVLogger, MeanLossGraphCallback
+from .visualize import teal_cmap
 
 # %% auto #0
 __all__ = ['TrainerFactory', 'BACKEND_REGISTRY', 'TRAINER_REGISTRY', 'register_backend', 'register_trainer', 'TrainerConfig',
@@ -128,7 +129,7 @@ def _validate_name(name: str, kind: str) -> str:
 
 # %% ../nbs/080_engines.ipynb #937358a3
 def register_backend(
-    name: str,
+        name: str,
 ) -> Callable[[Type["TrainerBackend"]], Type["TrainerBackend"]]:
     """
     Register a training backend adapter.
@@ -172,7 +173,7 @@ def register_backend(
     backend_name = _validate_name(name, "Backend")
 
     def decorator(
-        cls: Type["TrainerBackend"],
+            cls: Type["TrainerBackend"],
     ) -> Type["TrainerBackend"]:
         if not isinstance(cls, type) or not issubclass(cls, TrainerBackend):
             raise TypeError(
@@ -193,8 +194,8 @@ def register_backend(
 
 # %% ../nbs/080_engines.ipynb #8f89a115
 def register_trainer(
-    backend: str,
-    name: str = "supervised",
+        backend: str,
+        name: str = "supervised",
 ) -> Callable[[TrainerFactory], TrainerFactory]:
     """
     Register a trainer implementation for a training backend.
@@ -471,6 +472,7 @@ def _monai_metric_config(metrics, val_metrics=None, loss=None):
     a MONAI ``LossMetric`` is appended to the validation metrics to track
     validation loss using the same engine outputs.
     """
+
     def metric_name(metric):
         name = getattr(
             metric,
@@ -643,9 +645,8 @@ class TrainerBackend:
 
     def __init__(self, config: TrainerConfig):
         self.config = config
-        self.evaluator = None 
+        self.evaluator = None
         self.trainer = self._build_trainer()
-          
 
     @property
     def recorder(self):
@@ -900,43 +901,43 @@ class BioTrainer:
     """
 
     def __init__(
-        self,
-        model=None,
-        dls=None,
-        *,
-        optimizer=None,
-        optimizer_kwargs=None,
-        loss=None,
-        loss_kwargs=None,
-        metrics=None,
-        metrics_kwargs=None,
-        val_metrics=None,
-        val_metrics_kwargs=None,
-        epochs=1,
-        lr=None,
-        validate=True,
-        valid_every=1,
-        device=None,
-        callbacks=None,
-        callbacks_kwargs=None,
-        val_callbacks=None, 
-        val_callbacks_kwargs=None,
-        inferer=None,
-        postprocessing=None,
-        csv_logger=False,
-        show_graph=False,
-        show_summary=False,
-        find_lr=False,
-        find_lr_kwargs=None,
-        save_dir="models",
-        trainer="supervised",
-        backend_kwargs=None,
+            self,
+            model=None,
+            dls=None,
+            *,
+            optimizer=None,
+            optimizer_kwargs=None,
+            loss=None,
+            loss_kwargs=None,
+            metrics=None,
+            metrics_kwargs=None,
+            val_metrics=None,
+            val_metrics_kwargs=None,
+            epochs=1,
+            lr=None,
+            validate=True,
+            valid_every=1,
+            device=None,
+            callbacks=None,
+            callbacks_kwargs=None,
+            val_callbacks=None,
+            val_callbacks_kwargs=None,
+            inferer=None,
+            postprocessing=None,
+            csv_logger=False,
+            show_graph=False,
+            show_summary=False,
+            find_lr=False,
+            find_lr_kwargs=None,
+            save_dir="models",
+            trainer="supervised",
+            backend_kwargs=None,
     ):
         backend = get_backend()
 
         optimizer_kwargs = dict(optimizer_kwargs or {})
         loss_kwargs = dict(loss_kwargs or {})
-        metrics_kwargs =  dict(metrics_kwargs or {})
+        metrics_kwargs = dict(metrics_kwargs or {})
 
         if val_metrics is None:
             val_metrics = metrics
@@ -1143,13 +1144,13 @@ class BioTrainer:
 
 # %% ../nbs/080_engines.ipynb #8ef75e4a
 def _fastai_fit(
-    self,
-    n_epoch=None,
-    lr=None,
-    wd=None,
-    cbs=None,
-    reset_opt=False,
-    start_epoch=0,
+        self,
+        n_epoch=None,
+        lr=None,
+        wd=None,
+        cbs=None,
+        reset_opt=False,
+        start_epoch=0,
 ):
     """
     Train using the configured fastai trainer.
@@ -1247,10 +1248,12 @@ def _evaluation_metrics(metrics):
 
     return result
 
+
 def _evaluation_metric_value(metric, pred, target, output=None):
-    """Evaluate one sample, resetting copied metric state between samples."""
+    """Evaluate a sample or batch, resetting copied metric state each time."""
     from fastai.learner import Metric as FastaiMetric
     from ignite.metrics import Metric as IgniteMetric
+    from monai.metrics.metric import CumulativeIterationMetric
     from types import SimpleNamespace
 
     def detach(value):
@@ -1267,6 +1270,10 @@ def _evaluation_metric_value(metric, pred, target, output=None):
             metric.reset()
             metric.update(metric._output_transform(output if output is not None else (pred, target)))
             value = metric.compute()
+        elif isinstance(metric, CumulativeIterationMetric):
+            metric.reset()
+            metric(pred, target)
+            value = metric.aggregate()
         elif isinstance(metric, FastaiMetric):
             metric.reset()
             learn = SimpleNamespace(pred=pred, y=target, yb=(target,), to_detach=detach)
@@ -1279,27 +1286,241 @@ def _evaluation_metric_value(metric, pred, target, output=None):
         return detach(value)
 
 
+def _display_evaluation_statistics(result):
+    """Show one distribution and statistics table per collected loss or metric."""
+    import warnings
+    from bonsai.visualize import plot_stats, display_statistics_table
+
+    distributions = []
+    if "losses" in result:
+        distributions.append(("Loss", result["losses"]))
+    distributions.extend(result.get("metrics", {}).items())
+
+    for name, values in distributions:
+        arrays = [
+            value.detach().cpu().float().numpy().ravel()
+            if isinstance(value, torch.Tensor)
+            else np.asarray(value, dtype=float).ravel()
+            for value in values
+        ]
+        data = np.concatenate(arrays) if arrays else np.array([], dtype=float)
+        data = data[np.isfinite(data)]
+        if not data.size:
+            warnings.warn(
+                f"No finite values to visualize for {name!r}.",
+                stacklevel=2,
+            )
+            continue
+
+        stats = plot_stats(
+            data, fn_name=name,
+            show_kde=data.size > 1 and np.ptp(data) > 0,
+        )
+        display_statistics_table(stats, fn_name=name)
+
+# %% ../nbs/080_engines.ipynb #2246ac6b848d9105
+def _classification_data(output, vocab=None, threshold=0.5):
+    """Convert evaluation outputs to single-label class IDs and class names.
+
+    Accepts CPU/GPU tensors, NumPy arrays, or MONAI lists of samples.
+    Uses decoded predictions when available; otherwise uses argmax for
+    class scores or threshold for binary probabilities. For binary logits,
+    apply sigmoid through evaluate(act=...) or pass threshold=0 here.
+    """
+
+    def as_array(values):
+        if isinstance(values, torch.Tensor):
+            return values.detach().cpu().numpy()
+        if isinstance(values, (list, tuple)):
+            return np.asarray([
+                v.detach().cpu().numpy() if isinstance(v, torch.Tensor) else v
+                for v in values
+            ])
+        return np.asarray(values)
+
+    if output.get("targs") is None:
+        raise ValueError("Classification reports require targs in the output dictionary.")
+    source = output.get("decoded")
+    decoded = source is not None
+    if source is None:
+        source = output.get("preds")
+    if source is None:
+        raise ValueError("Classification reports require preds or decoded in the output dictionary.")
+
+    pred, target = as_array(source), as_array(output["targs"])
+    if pred.ndim == 0 or target.ndim == 0 or not len(target):
+        raise ValueError("Classification reports require non-empty sample arrays.")
+    class_count = 0
+    if target.ndim == 2 and target.shape[1] > 1:
+        if not (np.isin(target, [0, 1]).all() and (target.sum(axis=1) == 1).all()):
+            raise ValueError("Expected single-label or one-hot targets; multilabel targets are unsupported.")
+        class_count = target.shape[1]
+        target = target.argmax(axis=1)
+    elif target.ndim == 2 and target.shape[1] == 1:
+        target = target[:, 0]
+    if pred.ndim == 2 and pred.shape[1] > 1:
+        class_count = max(class_count, pred.shape[1])
+        pred = pred.argmax(axis=1)
+    else:
+        if pred.ndim == 2 and pred.shape[1] == 1:
+            pred = pred[:, 0]
+        if not decoded and np.issubdtype(pred.dtype, np.floating):
+            pred = (pred >= threshold).astype(int)
+            class_count = max(class_count, 2)
+    if pred.ndim != 1 or target.ndim != 1 or len(pred) != len(target):
+        raise ValueError("Expected one classification prediction and target per sample.")
+    for values in (pred, target):
+        if not np.isfinite(values).all() or (values < 0).any() or not np.equal(values, np.floor(values)).all():
+            raise ValueError("Class IDs must be finite non-negative integers.")
+    pred, target = pred.astype(int), target.astype(int)
+    class_count = max(class_count, int(max(pred.max(), target.max())) + 1)
+    names = list(vocab) if vocab is not None else list(range(class_count))
+    if len(names) < class_count:
+        raise ValueError("vocab does not contain all observed classes.")
+    return target, pred, np.arange(len(names)), names
+
+
+def _confusion_matrix(output, vocab=None, threshold=0.5):
+    """Return a confusion matrix from evaluation outputs (rows are actual classes)."""
+    from sklearn.metrics import confusion_matrix
+    target, pred, labels, _ = _classification_data(output, vocab, threshold)
+    return confusion_matrix(target, pred, labels=labels)
+
+
+def _plot_confusion_matrix(
+        output, vocab=None, normalize=True, title="Confusion matrix",
+        cmap="Blues", norm_dec=2, plot_txt=True, threshold=0.5, **kwargs,
+):
+    """Display a confusion matrix from evaluation outputs and return its axes."""
+    cm = _confusion_matrix(output, vocab, threshold)
+    _, _, _, names = _classification_data(output, vocab, threshold)
+    if normalize:
+        totals = cm.sum(axis=1, keepdims=True)
+        cm = np.divide(cm, totals, out=np.zeros_like(cm, dtype=float), where=totals != 0)
+    fig, ax = plt.subplots(**kwargs)
+    ax.set_frame_on(False)
+    ax.imshow(cm, interpolation="nearest", cmap=cmap)
+    ax.set(
+        title=title, xlabel="Predicted", ylabel="Actual",
+        xticks=np.arange(len(names)), yticks=np.arange(len(names)),
+        xticklabels=names, yticklabels=names,
+    )
+    ax.tick_params(axis="x", labelrotation=90)
+    if plot_txt:
+        for i, j in np.ndindex(cm.shape):
+            text = f"{cm[i, j]:.{norm_dec}f}" if normalize else str(cm[i, j])
+            ax.text(j, i, text, ha="center", va="center",
+                    color="white" if cm[i, j] > cm.max() / 2 else "black")
+    ax.grid(False)
+    fig.tight_layout()
+    plt.show()
+    return ax
+
+
+def _most_confused(output, vocab=None, min_val=1, threshold=0.5):
+    """Return (actual, predicted, count) errors sorted by descending count."""
+    cm = _confusion_matrix(output, vocab, threshold)
+    _, _, _, names = _classification_data(output, vocab, threshold)
+    errors = [
+        (names[i], names[j], int(cm[i, j]))
+        for i, j in np.ndindex(cm.shape)
+        if i != j and cm[i, j] >= min_val
+    ]
+    return sorted(errors, key=lambda item: item[2], reverse=True)
+
+
+def _skm_classification_report(output, vocab=None, threshold=0.5, output_dict=False):
+    """Return sklearn's classification report from evaluation outputs."""
+    from sklearn.metrics import classification_report
+    target, pred, labels, names = _classification_data(output, vocab, threshold)
+    return classification_report(
+        target, pred, labels=labels, target_names=[str(name) for name in names],
+        output_dict=output_dict, zero_division=0,
+    )
+
+
+def _classification_report(output, vocab=None, threshold=0.5, **plot_kwargs):
+    """Display all classification diagnostics and return their computed values."""
+
+    from IPython.display import display
+
+    cm = _confusion_matrix(output, vocab, threshold)
+    _plot_confusion_matrix(output, vocab=vocab, threshold=threshold, **plot_kwargs)
+    confused = _most_confused(output, vocab=vocab, threshold=threshold)
+    confused_df = pd.DataFrame(confused, columns=["Actual", "Predicted", "Count"])
+    report = _skm_classification_report(
+        output, vocab=vocab, threshold=threshold, output_dict=True,
+    )
+    rows = {}
+    for name, values in report.items():
+        rows[name] = (
+            {"precision": np.nan, "recall": np.nan, "f1-score": values,
+             "support": report["macro avg"]["support"]}
+            if name == "accuracy" else values
+        )
+    report_df = pd.DataFrame.from_dict(rows, orient="index")
+    report_df.index.name = "Class / summary"
+    report_df = report_df.reset_index()
+
+    table_styles = [
+        {"selector": "caption", "props": [
+            ("caption-side", "top"), ("text-align", "left"),
+            ("background-color", "transparent !important"),
+            ("font-size", "1.1em"), ("font-weight", "600"),
+            ("color", "#008080"), ("padding", "8px 0"),
+        ]},
+        {"selector": "th", "props": [
+            ("background-color", "transparent !important"),
+            ("color", "#285454"),
+            ("padding", "8px 12px"), ("text-align", "left"),
+            ("border-bottom", "2px solid #008080"),
+        ]},
+        {"selector": "td", "props": [
+            ("padding", "8px 12px"),  #("border-bottom", "1px solid #e3e8e8"),
+        ]},
+        {"selector": "tbody tr:hover", "props": [("background-color", "#f2f7f7")]},
+    ]
+    display(
+        confused_df.style.set_caption("Most confused")
+        .hide(axis="index").format({"Count": "{:,.0f}"})
+        .set_table_styles(table_styles)
+    )
+    display(
+        report_df.style.set_caption("Classification report")
+        .hide(axis="index")
+        .format({"precision": "{:.3f}", "recall": "{:.3f}",
+                 "f1-score": "{:.3f}", "support": "{:,.0f}"}, na_rep="—")
+        .set_table_styles(table_styles)
+    )
+    return {
+        "confusion_matrix": cm,
+        "most_confused": confused,
+        "report": report,
+    }
+
 # %% ../nbs/080_engines.ipynb #ed399495
 def _fastai_evaluate(
-    self,
-    dl=None,
-    split: int | str = "val",
-    with_input: bool = False,
-    with_decoded: bool = False,
-    with_loss: bool = False,
-    act=None,
-    inner: bool = False,
-    reorder: bool = True,
-    cbs=None,
-    *,
-    with_metrics: bool = False,
-    metrics=None,
-    save_preds=None,
-    save_targs=None,
-    with_preds: bool = True,
-    with_targs: bool = True,
-    concat_dim: int = 0,
-    pickle_protocol: int = 2,
+        self,
+        dl=None,
+        split: int | str = "val",
+        with_input: bool = False,
+        with_decoded: bool = False,
+        with_loss: bool = False,
+        act=None,
+        inner: bool = False,
+        reorder: bool = True,
+        cbs=None,
+        *,
+        with_metrics: bool = False,
+        metrics=None,
+        visualize: bool = True,
+        classification_report: bool = False,
+        save_preds=None,
+        save_targs=None,
+        with_preds: bool = True,
+        with_targs: bool = True,
+        cmap=teal_cmap,
+        pickle_protocol: int = 2,
 ) -> dict:
     """
     Evaluate the model and optionally return predictions, targets, and inputs.
@@ -1336,17 +1557,24 @@ def _fastai_evaluate(
         Whether to return predictions.
     with_targs : bool, default=True
         Whether to return targets.
-    concat_dim : int, default=0
-        Dimension along which batch outputs are concatenated.
     pickle_protocol : int, default=2
         Pickle protocol used when saving predictions and targets.
-
     with_metrics : bool, default=False
         Compute metrics independently for every sample.
     metrics : callable, sequence, or mapping, optional
         Metrics to compute when with_metrics is True. Defaults to metrics
         attached to the evaluator (the Learner for fastai). A mapping supplies
         explicit metric names. An empty collection disables all metrics.
+    visualize : bool, default=True
+        Show one plot_stats plot and one display_statistics_table table for
+        each collected loss and metric (enabled by with_loss/with_metrics).
+        Non-finite values are excluded from displays only; empty distributions
+        are skipped with a warning. KDE is disabled for constant values.
+    classification_report : bool, default=False
+        Show a confusion matrix, most-confused classes, and sklearn
+        classification report. Adds computed diagnostics under
+        result["classification_report"]. Supports single-label classification;
+        use act to convert binary logits to probabilities.
 
     Returns
     -------
@@ -1391,8 +1619,6 @@ def _fastai_evaluate(
     metric_fns = _evaluation_metrics(
         self.trainer.metrics if metrics is None else metrics
     ) if with_metrics else {}
-    if with_metrics and concat_dim != 0:
-        raise ValueError("Per-sample metrics require concat_dim=0.")
 
     outputs = self.trainer.get_preds(
         ds_idx=split,
@@ -1406,9 +1632,8 @@ def _fastai_evaluate(
         cbs=cbs,
         save_preds=save_preds,
         save_targs=save_targs,
-        with_preds=with_preds or with_metrics,
-        with_targs=with_targs or with_metrics,
-        concat_dim=concat_dim,
+        with_preds=with_preds or with_metrics or classification_report,
+        with_targs=with_targs or with_metrics or classification_report,
         pickle_protocol=pickle_protocol,
     )
     values = iter(outputs)
@@ -1444,8 +1669,13 @@ def _fastai_evaluate(
             result["decoded"] = next(values)
     if with_loss:
         result["losses"] = next(values)
+    if visualize:
+        _display_evaluation_statistics(result)
+    if classification_report:
+        result["classification_report"] = _classification_report(
+            dict(result, preds=preds, targs=targs, cmap=cmap)
+        )
     return result
-
 
 # %% ../nbs/080_engines.ipynb #917551da
 def _fastai_predict(self, *args, **kwargs):
@@ -1498,6 +1728,7 @@ class FastaiTrainerBackend(TrainerBackend):
     The registered trainer is expected to be a bonsai trainer such as
     ``fastTrainer`` rather than a native fastai ``Learner``.
     """
+
     def _native_config(self) -> Dict[str, Any]:
         cfg = self.config
 
@@ -1520,6 +1751,7 @@ class FastaiTrainerBackend(TrainerBackend):
     def recorder(self):
         return self.trainer.recorder
 
+
 FastaiTrainerBackend.fit = _fastai_fit
 FastaiTrainerBackend.evaluate = _fastai_evaluate
 FastaiTrainerBackend.predict = _fastai_predict
@@ -1531,28 +1763,40 @@ class fastTrainer(Learner):
     A custom implementation of the FastAI Learner class for training models in bioinformatics applications.
 
     """
-    
-    def __init__(self, 
-                 dataloaders: DataLoaders = None, # The DataLoader objects containing training and validation datasets.
-                 model: callable = None, # A callable model that will be trained on the dataset.
-                 loss_fn: Any | None = None, # The loss function to optimize during training. If None, defaults to a suitable default.
-                 optimizer: fastaiOptimizer | OptimWrapper = Adam, # The optimizer function to use. Defaults to Adam if not specified.
-                 lr: float | slice = 1e-3, # Learning rate for the optimizer. Can be a float or a slice object for learning rate scheduling.
-                 splitter: callable = trainable_params, # 
-                 callbacks: Callback | MutableSequence | None = None, # A callable that determines which parameters of the model should be updated during training.
-                 metrics: Any | MutableSequence | None = None, # Optional list of callback functions to customize training behavior.
-                 csv_log: bool = False, # Metrics to evaluate the performance of the model during training.
-                 show_graph: bool = True, # Whether to log training history to a CSV file. If True, logs will be appended to 'history.csv'.
-                 show_summary: bool = True, # The base directory where models are saved or loaded from. Defaults to None.
-                 find_lr: bool = False, # Subdirectory within the base path where trained models are stored. Default is 'models'.
-                 find_lr_fn = valley, # Weight decay factor for optimization. Defaults to None.
-                 path: str | Path | None = None, # Whether to apply weight decay to batch normalization and bias parameters.
-                 model_dir: str | Path = 'models', # Whether to update the batch normalization statistics during training.
-                 wd: float | int | None = None, 
-                 wd_bn_bias: bool = False, 
-                 train_bn: bool = True, 
-                 moms: tuple = (0.95,0.85,0.95), # Tuple of tuples representing the momentum values for different layers in the model. Defaults to FastAI's default settings if not specified.
-                 default_cbs: bool = True, # Automatically include default callbacks such as ShowGraphCallback and CSVLogger.
+
+    def __init__(self,
+                 dataloaders: DataLoaders = None,  # The DataLoader objects containing training and validation datasets.
+                 model: callable = None,  # A callable model that will be trained on the dataset.
+                 loss_fn: Any | None = None,
+                 # The loss function to optimize during training. If None, defaults to a suitable default.
+                 optimizer: fastaiOptimizer | OptimWrapper = Adam,
+                 # The optimizer function to use. Defaults to Adam if not specified.
+                 lr: float | slice = 1e-3,
+                 # Learning rate for the optimizer. Can be a float or a slice object for learning rate scheduling.
+                 splitter: callable = trainable_params,  #
+                 callbacks: Callback | MutableSequence | None = None,
+                 # A callable that determines which parameters of the model should be updated during training.
+                 metrics: Any | MutableSequence | None = None,
+                 # Optional list of callback functions to customize training behavior.
+                 csv_log: bool = False,  # Metrics to evaluate the performance of the model during training.
+                 show_graph: bool = True,
+                 # Whether to log training history to a CSV file. If True, logs will be appended to 'history.csv'.
+                 show_summary: bool = True,
+                 # The base directory where models are saved or loaded from. Defaults to None.
+                 find_lr: bool = False,
+                 # Subdirectory within the base path where trained models are stored. Default is 'models'.
+                 find_lr_fn=valley,  # Weight decay factor for optimization. Defaults to None.
+                 path: str | Path | None = None,
+                 # Whether to apply weight decay to batch normalization and bias parameters.
+                 model_dir: str | Path = 'models',
+                 # Whether to update the batch normalization statistics during training.
+                 wd: float | int | None = None,
+                 wd_bn_bias: bool = False,
+                 train_bn: bool = True,
+                 moms: tuple = (0.95, 0.85, 0.95),
+                 # Tuple of tuples representing the momentum values for different layers in the model. Defaults to FastAI's default settings if not specified.
+                 default_cbs: bool = True,
+                 # Automatically include default callbacks such as ShowGraphCallback and CSVLogger.
                  ):
         cbs = callbacks if callbacks is not None else []  # Ensure cbs is a list
         if default_cbs:
@@ -1560,16 +1804,16 @@ class fastTrainer(Learner):
                 cbs.append(MeanLossGraphCallback())
             if csv_log:
                 cbs.append(CSVLogger(fname='history.csv', append=False))
-        
-        super().__init__(dataloaders, model, loss_fn, optimizer, lr, splitter, cbs, metrics, path, model_dir, wd, wd_bn_bias, train_bn, moms)
-        
+
+        super().__init__(dataloaders, model, loss_fn, optimizer, lr, splitter, cbs, metrics, path, model_dir, wd,
+                         wd_bn_bias, train_bn, moms)
+
         if show_summary:
-                print(self.summary())
+            print(self.summary())
         if find_lr:
-                lr = self.lr_find(suggest_funcs=find_lr_fn)
-                self.lr = float('%.1g'%(lr))
-                print('Inferred learning rate: ', self.lr)
-        
+            lr = self.lr_find(suggest_funcs=find_lr_fn)
+            self.lr = float('%.1g' % (lr))
+            print('Inferred learning rate: ', self.lr)
 
     @classmethod
     def from_yaml(cls, dataloaders, model, yaml_path):
@@ -1580,8 +1824,6 @@ class fastTrainer(Learner):
         config = read_yaml(yaml_path)
         config = {key: (None if value == "None" else value) for key, value in config.items()}
 
-        
-        
         # OBTAIN THE LOSS FUNCTION
         loss_str = config.get('loss_fn', None)
         # Look for the loss function within the variables and check if its valid
@@ -1592,7 +1834,6 @@ class fastTrainer(Learner):
             if lf_cls is None:
                 raise ValueError(f"Loss function '{loss_str}' not found or invalid.")
             loss_func = lf_cls()
-
 
         # OBTAIN THE OPTIMIZER
         opt_str = config.get('optimizer', 'Adam')
@@ -1606,7 +1847,6 @@ class fastTrainer(Learner):
             if opt_cls is None or not callable(opt_cls):
                 raise ValueError(f"Optimizer '{opt_str}' not found or invalid.")
             opt_func = opt_cls
-
 
         # OBTAIN THE METRICS
         metrics_cfg = config.get('metrics', [])
@@ -1627,12 +1867,11 @@ class fastTrainer(Learner):
         if isinstance(splitter_str, str):
             splitter_func = globals().get(splitter_str) or getattr(fastai.learner, splitter_str, None)
         elif splitter_str is None:
-            splitter_func = trainable_params 
+            splitter_func = trainable_params
         else:
-                splitter_func = splitter_str
+            splitter_func = splitter_str
 
-
-        # OBTAIN OTHER PARAMETERS FROM THE YAML CONFIGURATION 
+        # OBTAIN OTHER PARAMETERS FROM THE YAML CONFIGURATION
         lr = config.get('lr', 1e-3)
         csv_log = config.get('csv_log', False)
         show_graph = config.get('show_graph', True)
@@ -1642,16 +1881,14 @@ class fastTrainer(Learner):
         wd = config.get('wd', None)
         wd_bn_bias = config.get('wd_bn_bias', False)
         train_bn = config.get('train_bn', True)
-        moms = config.get('moms', (0.95,0.85,0.95))
-   
-
+        moms = config.get('moms', (0.95, 0.85, 0.95))
 
         # Return all the parameters
-        return cls(dataloaders = dataloaders, model = model, loss_fn = loss_func, optimizer = opt_func,
-            lr = lr, splitter = splitter_func, callbacks = callbacks, metrics = valid_metrics, path = path,
-            model_dir = model_dir, wd = wd, wd_bn_bias = wd_bn_bias, train_bn = train_bn, moms = moms,
-            csv_log = csv_log, show_graph = show_graph, show_summary = show_summary          
-        )        
+        return cls(dataloaders=dataloaders, model=model, loss_fn=loss_func, optimizer=opt_func,
+                   lr=lr, splitter=splitter_func, callbacks=callbacks, metrics=valid_metrics, path=path,
+                   model_dir=model_dir, wd=wd, wd_bn_bias=wd_bn_bias, train_bn=train_bn, moms=moms,
+                   csv_log=csv_log, show_graph=show_graph, show_summary=show_summary
+                   )
 
 # %% ../nbs/080_engines.ipynb #8d0023f0
 def _add_norm(dls, meta, pretrained, n_in=3):
@@ -1660,74 +1897,90 @@ def _add_norm(dls, meta, pretrained, n_in=3):
     if stats is None: return
     if n_in != len(stats[0]): return
     if not dls.after_batch.fs.filter(risinstance(Normalize)):
-        dls.add_tfms([Normalize.from_stats(*stats)],'after_batch')
+        dls.add_tfms([Normalize.from_stats(*stats)], 'after_batch')
+
 
 def _timm_norm(dls, cfg, pretrained, n_in=3):
     if not pretrained: return
     if n_in != len(cfg['mean']): return
     if not dls.after_batch.fs.filter(risinstance(Normalize)):
-        tfm = Normalize.from_stats(cfg['mean'],cfg['std'])
-        dls.add_tfms([tfm],'after_batch')
+        tfm = Normalize.from_stats(cfg['mean'], cfg['std'])
+        dls.add_tfms([tfm], 'after_batch')
 
 # %% ../nbs/080_engines.ipynb #84e632fd
 @register_trainer("fastai", "vision")
 @delegates(create_vision_model)
-def visionTrainer(  dataloaders: DataLoaders, # The DataLoader objects containing training and validation datasets.
-                    model: callable, # A callable model that will be trained on the dataset.
-                    normalize=True, 
-                    n_out=None, 
-                    pretrained=True, 
-                    weights=None,
-                    # Trainer args
-                    loss_fn: Any | None = None, # The loss function to optimize during training. If None, defaults to a suitable default.
-                    optimizer: fastaiOptimizer | OptimWrapper = Adam, # The optimizer function to use. Defaults to Adam if not specified.
-                    lr: float | slice = 1e-3, # Learning rate for the optimizer. Can be a float or a slice object for learning rate scheduling.
-                    splitter: callable = trainable_params, # 
-                    callbacks: Callback | MutableSequence | None = None, # A callable that determines which parameters of the model should be updated during training.
-                    metrics: Any | MutableSequence | None = None, # Optional list of callback functions to customize training behavior.
-                    csv_log: bool = False, # Metrics to evaluate the performance of the model during training.
-                    show_graph: bool = True, # Whether to log training history to a CSV file. If True, logs will be appended to 'history.csv'.
-                    show_summary: bool = False, # The base directory where models are saved or loaded from. Defaults to None.
-                    find_lr: bool = False, # Subdirectory within the base path where trained models are stored. Default is 'models'.
-                    find_lr_fn = valley, # Weight decay factor for optimization. Defaults to None.
-                    path: str | Path | None = None, # Whether to apply weight decay to batch normalization and bias parameters.
-                    model_dir: str | Path = 'models', # Whether to update the batch normalization statistics during training.
-                    wd: float | int | None = None, 
-                    wd_bn_bias: bool = False, 
-                    train_bn: bool = True, 
-                    moms: tuple = (0.95,0.85,0.95), # Tuple of tuples representing the momentum values for different layers in the model. Defaults to FastAI's default settings if not specified.
-                    default_cbs: bool = True, # Automatically include default callbacks such as ShowGraphCallback and CSVLogger.
-                    # model & head args
-                    cut=None, 
-                    init=kaiming_normal_, 
-                    custom_head=None, 
-                    concat_pool=True, 
-                    pool=True,
-                    lin_ftrs=None, 
-                    ps=0.5, 
-                    first_bn=True, 
-                    bn_final=False, 
-                    lin_first=False, 
-                    y_range=None, 
-                    **kwargs):
+def visionTrainer(dataloaders: DataLoaders,  # The DataLoader objects containing training and validation datasets.
+                  model: callable,  # A callable model that will be trained on the dataset.
+                  normalize=True,
+                  n_out=None,
+                  pretrained=True,
+                  weights=None,
+                  # Trainer args
+                  loss_fn: Any | None = None,
+                  # The loss function to optimize during training. If None, defaults to a suitable default.
+                  optimizer: fastaiOptimizer | OptimWrapper = Adam,
+                  # The optimizer function to use. Defaults to Adam if not specified.
+                  lr: float | slice = 1e-3,
+                  # Learning rate for the optimizer. Can be a float or a slice object for learning rate scheduling.
+                  splitter: callable = trainable_params,  #
+                  callbacks: Callback | MutableSequence | None = None,
+                  # A callable that determines which parameters of the model should be updated during training.
+                  metrics: Any | MutableSequence | None = None,
+                  # Optional list of callback functions to customize training behavior.
+                  csv_log: bool = False,  # Metrics to evaluate the performance of the model during training.
+                  show_graph: bool = True,
+                  # Whether to log training history to a CSV file. If True, logs will be appended to 'history.csv'.
+                  show_summary: bool = False,
+                  # The base directory where models are saved or loaded from. Defaults to None.
+                  find_lr: bool = False,
+                  # Subdirectory within the base path where trained models are stored. Default is 'models'.
+                  find_lr_fn=valley,  # Weight decay factor for optimization. Defaults to None.
+                  path: str | Path | None = None,
+                  # Whether to apply weight decay to batch normalization and bias parameters.
+                  model_dir: str | Path = 'models',
+                  # Whether to update the batch normalization statistics during training.
+                  wd: float | int | None = None,
+                  wd_bn_bias: bool = False,
+                  train_bn: bool = True,
+                  moms: tuple = (0.95, 0.85, 0.95),
+                  # Tuple of tuples representing the momentum values for different layers in the model. Defaults to FastAI's default settings if not specified.
+                  default_cbs: bool = True,
+                  # Automatically include default callbacks such as ShowGraphCallback and CSVLogger.
+                  # model & head args
+                  cut=None,
+                  init=kaiming_normal_,
+                  custom_head=None,
+                  concat_pool=True,
+                  pool=True,
+                  lin_ftrs=None,
+                  ps=0.5,
+                  first_bn=True,
+                  bn_final=False,
+                  lin_first=False,
+                  y_range=None,
+                  **kwargs):
     "Build a vision trainer from `dataloaders` and `model`"
     if n_out is None: n_out = get_c(dataloaders)
     assert n_out, "`n_out` is not defined, and could not be inferred from data, set `dataloaders.c` or pass `n_out`"
-    meta = model_meta.get(model, {'cut':cut, 'split':default_split})
+    meta = model_meta.get(model, {'cut': cut, 'split': default_split})
     model_args = dict(init=init, custom_head=custom_head, concat_pool=concat_pool, pool=pool, lin_ftrs=lin_ftrs, ps=ps,
                       first_bn=first_bn, bn_final=bn_final, lin_first=lin_first, y_range=y_range, **kwargs)
     n_in = kwargs['n_in'] if 'n_in' in kwargs else 3
     if isinstance(model, str):
-        model,cfg = create_timm_model(model, n_out, default_split, pretrained, **model_args)
+        model, cfg = create_timm_model(model, n_out, default_split, pretrained, **model_args)
         if normalize: _timm_norm(dataloaders, cfg, pretrained, n_in)
     else:
         if normalize: _add_norm(dataloaders, meta, pretrained, n_in)
         model = create_vision_model(model, n_out, pretrained=pretrained, weights=weights, **model_args)
 
     splitter = ifnone(splitter, meta['split'])
-    trainer = fastTrainer(dataloaders, model, loss_fn=loss_fn, optimizer=optimizer, lr=lr, splitter=splitter, callbacks=callbacks, csv_log=csv_log, 
-                        show_graph=show_graph, show_summary=show_summary, find_lr=find_lr, find_lr_fn=find_lr_fn, metrics=metrics, path=path, 
-                        model_dir=model_dir, wd=wd, wd_bn_bias=wd_bn_bias, train_bn=train_bn, moms=moms, default_cbs=default_cbs)
+    trainer = fastTrainer(dataloaders, model, loss_fn=loss_fn, optimizer=optimizer, lr=lr, splitter=splitter,
+                          callbacks=callbacks, csv_log=csv_log,
+                          show_graph=show_graph, show_summary=show_summary, find_lr=find_lr, find_lr_fn=find_lr_fn,
+                          metrics=metrics, path=path,
+                          model_dir=model_dir, wd=wd, wd_bn_bias=wd_bn_bias, train_bn=train_bn, moms=moms,
+                          default_cbs=default_cbs)
     if pretrained: trainer.freeze()
     # keep track of args for loggers
     store_attr('model,normalize,n_out,pretrained', self=trainer, **kwargs)
@@ -1744,10 +1997,10 @@ def _monai_build_evaluator(self):
         The constructed evaluator.
     """
     backend_trainers = TRAINER_REGISTRY.get(
-            self.config.backend,
-            {},
-        )
-    
+        self.config.backend,
+        {},
+    )
+
     evaluator_spec = self.config.backend_kwargs.get(
         "evaluator",
         "supervised_evaluator",
@@ -1770,7 +2023,7 @@ def _monai_build_evaluator(self):
             f"backend {self.config.backend!r}. "
             f"Available evaluators: {available or 'none'}"
         )
-    
+
     kwargs = self._translate_config(evaluator, drop_none=True)
 
     return evaluator(**kwargs)
@@ -1810,9 +2063,11 @@ def _monai_eval_tensor(value):
         return value.detach().cpu()
     return torch.as_tensor(value)
 
+
 def _monai_eval_items(value):
     """Return the individual samples contained in a batched value."""
     return list(value)
+
 
 def _monai_eval_dataloader(self, dl, split):
     """Resolve the evaluation dataloader from an explicit loader or split."""
@@ -1826,6 +2081,7 @@ def _monai_eval_dataloader(self, dl, split):
         raise ValueError("split must be 'train', 'val', 0, or 1.")
 
     return self.config.dls.valid if split else self.config.dls.train
+
 
 def _monai_evaluator_metrics(evaluator):
     """Find metrics attached to the evaluator's epoch-completed event."""
@@ -1844,23 +2100,29 @@ def _monai_evaluator_metrics(evaluator):
 
 # %% ../nbs/080_engines.ipynb #dc8e487a0a7c6506
 def _monai_evaluate(
-    self,
-    max_batches=None,
-    pred_key="pred",
-    label_key="label",
-    output_transform=None,
-    postprocessing=None,
-    *,
-    dl=None,
-    split: int | str = "val",
-    with_input: bool = False,
-    with_decoded: bool = False,
-    with_loss: bool = False,
-    act=None,
-    with_metrics: bool = False,
-    metrics=None,
-    save_preds=None,
-    save_targs=None,
+        self,
+        max_batches=None,
+        pred_key="pred",
+        label_key="label",
+        output_transform=None,
+        postprocessing=None,
+        *,
+        dl=None,
+        split: int | str = "val",
+        with_input: bool = False,
+        with_decoded: bool = False,
+        with_loss: bool = False,
+        act=None,
+        with_metrics: bool = False,
+        metrics=None,
+        visualize: bool = True,
+        classification_report: bool = False,
+        save_preds=None,
+        save_targs=None,
+        cmap=teal_cmap,
+        threshold=0.5,
+        vocab=None,
+        pickle_protocol: int = 2,
 ) -> dict:
     """
     Evaluate a MONAI model and collect detached, CPU per-sample results.
@@ -1900,18 +2162,29 @@ def _monai_evaluate(
     save_targs : path-like, optional
         Destination for saving the target list using ``torch.save``.
     with_metrics : bool, default=False
-        Compute metrics independently for every sample.
+        Compute each metric once per batch. Metrics named Loss (case-insensitive)
+        are skipped; use with_loss for per-sample losses.
     metrics : callable, sequence, or mapping, optional
         Metrics to compute when with_metrics is True. Defaults to metrics
-        attached to the evaluator (the Learner for fastai). A mapping supplies
+        attached to the evaluator. A mapping supplies
         explicit metric names. An empty collection disables all metrics.
+    visualize : bool, default=True
+        Show one plot_stats plot and one display_statistics_table table for
+        each collected loss and metric (enabled by with_loss/with_metrics).
+        Non-finite values are excluded from displays only; empty distributions
+        are skipped with a warning. KDE is disabled for constant values.
+    classification_report : bool, default=False
+        Show a confusion matrix, most-confused classes, and sklearn
+        classification report. Adds computed diagnostics under
+        result["classification_report"]. Supports single-label classification;
+        use act to convert binary logits to probabilities.
 
     Returns
     -------
     dict
         With with_metrics=True, also contains "metrics": a mapping from metric
-        names to lists of per-sample values. Metrics that are undefined for a
-        single sample retain their native NaN/error behavior.
+        names to lists of per-batch values. Metrics such as ROC AUC receive
+        the full batch; batches missing required classes can still yield NaN.
         A dictionary containing ``preds`` and ``targs``, with optional
         ``inputs``, ``decoded``, and ``losses`` lists. Each list contains
         one entry per sample, in evaluation order.
@@ -1935,6 +2208,7 @@ def _monai_evaluate(
     """
 
     from ignite.engine import Events
+    from copy import deepcopy
 
     if not hasattr(self, "evaluator"):
         raise RuntimeError(
@@ -1973,6 +2247,11 @@ def _monai_evaluate(
     metric_fns = _evaluation_metrics(
         _monai_evaluator_metrics(evaluator) if metrics is None else metrics
     ) if with_metrics else {}
+    metric_fns = {
+        name: deepcopy(metric, {id(evaluator): evaluator})
+        for name, metric in metric_fns.items()
+        if str(name).strip().lower() != "loss"
+    }
     if with_metrics:
         result["metrics"] = {name: [] for name in metric_fns}
 
@@ -1998,6 +2277,16 @@ def _monai_evaluate(
                     ).float().mean()
                     for p, y in zip(raw_preds, raw_labels)
                 ]
+
+        if with_metrics:
+            batch_preds = torch.stack(raw_preds)
+            batch_labels = torch.stack(raw_labels)
+            for name, metric in metric_fns.items():
+                result["metrics"][name].append(
+                    _evaluation_metric_value(
+                        metric, batch_preds, batch_labels, output
+                    )
+                )
 
         if postprocessing is not None:
             pred, label = postprocessing((pred, label))
@@ -2032,21 +2321,6 @@ def _monai_evaluate(
                     if activation is not None
                     else p
                 )
-
-                if with_metrics:
-                    # Preserve evaluator output transforms, including auxiliary keys.
-                    sample_output = (
-                        {key: value[i:i+1] for key, value in output.items()}
-                        if isinstance(output, dict)
-                        else [output[i]]
-                    )
-                    for name, metric in metric_fns.items():
-                        result["metrics"][name].append(
-                            _evaluation_metric_value(
-                                metric, raw_preds[i].unsqueeze(0),
-                                raw_labels[i].unsqueeze(0), sample_output
-                            )
-                        )
 
                 result["preds"].append(_monai_eval_tensor(p_activated))
                 result["targs"].append(_monai_eval_tensor(y))
@@ -2101,10 +2375,16 @@ def _monai_evaluate(
         raise RuntimeError("No predictions or targets were collected.")
 
     if save_preds is not None:
-        torch.save(result["preds"], Path(save_preds))
+        torch.save(result["preds"], Path(save_preds), pickle_protocol=-pickle_protocol)
 
     if save_targs is not None:
-        torch.save(result["targs"], Path(save_targs))
+        torch.save(result["targs"], Path(save_targs), pickle_protocol=-pickle_protocol)
+
+    if visualize:
+        _display_evaluation_statistics(result)
+
+    if classification_report:
+        result["classification_report"] = _classification_report(result, vocab=vocab, threshold=threshold, cmap=cmap)
 
     return result
 
@@ -2190,6 +2470,7 @@ class MonaiTrainerBackend(TrainerBackend):
     resolves the ``"supervised"`` trainer registered for the monai backend.
 
     """
+
     def __init__(self, config: TrainerConfig):
         self.config = config
         self.trainer = self._build_trainer()
@@ -2228,9 +2509,9 @@ MonaiTrainerBackend.evaluate = _monai_evaluate
 
 # %% ../nbs/080_engines.ipynb #f271a07a
 def _monai_trainer(
-    class_name: str,
-    *args: Any,
-    **kwargs: Any,
+        class_name: str,
+        *args: Any,
+        **kwargs: Any,
 ) -> Any:
     """
     Construct a trainer engine from ``monai.engines``.
@@ -2271,31 +2552,31 @@ def _monai_trainer(
 # %% ../nbs/080_engines.ipynb #f83e79a4
 @register_trainer("monai", "supervised")
 def _monai_supervised(
-    device: str | torch.device,
-    max_epochs: int,
-    train_data_loader: Iterable | DataLoader,
-    network: torch.nn.Module,
-    optimizer: Optimizer,
-    loss_function: Callable,
-    epoch_length: int | None = None,
-    non_blocking: bool = False,
-    prepare_batch: Callable = default_prepare_batch,
-    iteration_update: Callable[[Engine, Any], Any] | None = None,
-    inferer: Inferer | None = None,
-    postprocessing: Transform | None = None,
-    key_train_metric: dict[str, Metric] | None = None,
-    additional_metrics: dict[str, Metric] | None = None,
-    metric_cmp_fn: Callable = default_metric_cmp_fn,
-    train_handlers: Sequence | None = None,
-    amp: bool = False,
-    event_names: list[str | EventEnum | type[EventEnum]] | None = None,
-    event_to_attr: dict | None = None,
-    decollate: bool = True,
-    optim_set_to_none: bool = False,
-    to_kwargs: dict | None = None,
-    amp_kwargs: dict | None = None,
-    compile: bool = False,
-    compile_kwargs: dict | None = None,
+        device: str | torch.device,
+        max_epochs: int,
+        train_data_loader: Iterable | DataLoader,
+        network: torch.nn.Module,
+        optimizer: Optimizer,
+        loss_function: Callable,
+        epoch_length: int | None = None,
+        non_blocking: bool = False,
+        prepare_batch: Callable = default_prepare_batch,
+        iteration_update: Callable[[Engine, Any], Any] | None = None,
+        inferer: Inferer | None = None,
+        postprocessing: Transform | None = None,
+        key_train_metric: dict[str, Metric] | None = None,
+        additional_metrics: dict[str, Metric] | None = None,
+        metric_cmp_fn: Callable = default_metric_cmp_fn,
+        train_handlers: Sequence | None = None,
+        amp: bool = False,
+        event_names: list[str | EventEnum | type[EventEnum]] | None = None,
+        event_to_attr: dict | None = None,
+        decollate: bool = True,
+        optim_set_to_none: bool = False,
+        to_kwargs: dict | None = None,
+        amp_kwargs: dict | None = None,
+        compile: bool = False,
+        compile_kwargs: dict | None = None,
 ) -> Any:
     """
     Construct a MONAI ``SupervisedTrainer``.
@@ -2394,34 +2675,34 @@ def _monai_supervised(
 # %% ../nbs/080_engines.ipynb #9b4a3016
 @register_trainer("monai", "gan")
 def _monai_gan(
-    device: str | torch.device,
-    max_epochs: int,
-    train_data_loader: DataLoader,
-    g_network: torch.nn.Module,
-    g_optimizer: Optimizer,
-    g_loss_function: Callable,
-    d_network: torch.nn.Module,
-    d_optimizer: Optimizer,
-    d_loss_function: Callable,
-    epoch_length: int | None = None,
-    g_inferer: Inferer | None = None,
-    d_inferer: Inferer | None = None,
-    d_train_steps: int = 1,
-    latent_shape: int = 64,
-    non_blocking: bool = False,
-    d_prepare_batch: Callable = default_prepare_batch,
-    g_prepare_batch: Callable = default_make_latent,
-    g_update_latents: bool = True,
-    iteration_update: Callable[[Engine, Any], Any] | None = None,
-    postprocessing: Transform | None = None,
-    key_train_metric: dict[str, Metric] | None = None,
-    additional_metrics: dict[str, Metric] | None = None,
-    metric_cmp_fn: Callable = default_metric_cmp_fn,
-    train_handlers: Sequence | None = None,
-    decollate: bool = True,
-    optim_set_to_none: bool = False,
-    to_kwargs: dict | None = None,
-    amp_kwargs: dict | None = None,
+        device: str | torch.device,
+        max_epochs: int,
+        train_data_loader: DataLoader,
+        g_network: torch.nn.Module,
+        g_optimizer: Optimizer,
+        g_loss_function: Callable,
+        d_network: torch.nn.Module,
+        d_optimizer: Optimizer,
+        d_loss_function: Callable,
+        epoch_length: int | None = None,
+        g_inferer: Inferer | None = None,
+        d_inferer: Inferer | None = None,
+        d_train_steps: int = 1,
+        latent_shape: int = 64,
+        non_blocking: bool = False,
+        d_prepare_batch: Callable = default_prepare_batch,
+        g_prepare_batch: Callable = default_make_latent,
+        g_update_latents: bool = True,
+        iteration_update: Callable[[Engine, Any], Any] | None = None,
+        postprocessing: Transform | None = None,
+        key_train_metric: dict[str, Metric] | None = None,
+        additional_metrics: dict[str, Metric] | None = None,
+        metric_cmp_fn: Callable = default_metric_cmp_fn,
+        train_handlers: Sequence | None = None,
+        decollate: bool = True,
+        optim_set_to_none: bool = False,
+        to_kwargs: dict | None = None,
+        amp_kwargs: dict | None = None,
 ) -> Any:
     """
     Construct a MONAI ``GanTrainer``.
@@ -2530,34 +2811,34 @@ def _monai_gan(
 # %% ../nbs/080_engines.ipynb #7a385829
 @register_trainer("monai", "adversarial")
 def _monai_adversarial(
-    device: torch.device | str,
-    max_epochs: int,
-    train_data_loader: Iterable | DataLoader,
-    g_network: torch.nn.Module,
-    g_optimizer: Optimizer,
-    g_loss_function: Callable,
-    recon_loss_function: Callable,
-    d_network: torch.nn.Module,
-    d_optimizer: Optimizer,
-    d_loss_function: Callable,
-    epoch_length: int | None = None,
-    non_blocking: bool = False,
-    prepare_batch: Callable = default_prepare_batch,
-    iteration_update: Callable | None = None,
-    g_inferer: Inferer | None = None,
-    d_inferer: Inferer | None = None,
-    postprocessing: Transform | None = None,
-    key_train_metric: dict[str, Metric] | None = None,
-    additional_metrics: dict[str, Metric] | None = None,
-    metric_cmp_fn: Callable = default_metric_cmp_fn,
-    train_handlers: Sequence | None = None,
-    amp: bool = False,
-    event_names: list[str | EventEnum | type[EventEnum]] | None = None,
-    event_to_attr: dict | None = None,
-    decollate: bool = True,
-    optim_set_to_none: bool = False,
-    to_kwargs: dict | None = None,
-    amp_kwargs: dict | None = None,
+        device: torch.device | str,
+        max_epochs: int,
+        train_data_loader: Iterable | DataLoader,
+        g_network: torch.nn.Module,
+        g_optimizer: Optimizer,
+        g_loss_function: Callable,
+        recon_loss_function: Callable,
+        d_network: torch.nn.Module,
+        d_optimizer: Optimizer,
+        d_loss_function: Callable,
+        epoch_length: int | None = None,
+        non_blocking: bool = False,
+        prepare_batch: Callable = default_prepare_batch,
+        iteration_update: Callable | None = None,
+        g_inferer: Inferer | None = None,
+        d_inferer: Inferer | None = None,
+        postprocessing: Transform | None = None,
+        key_train_metric: dict[str, Metric] | None = None,
+        additional_metrics: dict[str, Metric] | None = None,
+        metric_cmp_fn: Callable = default_metric_cmp_fn,
+        train_handlers: Sequence | None = None,
+        amp: bool = False,
+        event_names: list[str | EventEnum | type[EventEnum]] | None = None,
+        event_to_attr: dict | None = None,
+        decollate: bool = True,
+        optim_set_to_none: bool = False,
+        to_kwargs: dict | None = None,
+        amp_kwargs: dict | None = None,
 ) -> Any:
     """
     Construct a MONAI ``AdversarialTrainer``.
@@ -2666,27 +2947,27 @@ def _monai_adversarial(
 # %% ../nbs/080_engines.ipynb #b7d2f9db
 @register_trainer("monai", "supervised_evaluator")
 def _monai_supervisedevaluator(
-    device: str | torch.device,
-    val_data_loader: Iterable | DataLoader,
-    network: torch.nn.Module,
-    val_epoch_length: int | None = None,
-    non_blocking: bool = False,
-    prepare_batch: Callable = default_prepare_batch,
-    iteration_update: Callable[[Engine, Any], Any] | None = None,
-    inferer: Inferer | None = None,
-    postprocessing: Transform | None = None,
-    key_val_metric: dict[str, Metric] | None = None,
-    additional_val_metrics: dict[str, Metric] | None = None,
-    metric_cmp_fn: Callable = default_metric_cmp_fn,
-    val_handlers: Sequence | None = None,
-    amp: bool = False,
-    event_names: list[str | EventEnum | type[EventEnum]] | None = None,
-    event_to_attr: dict | None = None,
-    decollate: bool = True,
-    to_kwargs: dict | None = None,
-    amp_kwargs: dict | None = None,
-    compile: bool = False,
-    compile_kwargs: dict | None = None,
+        device: str | torch.device,
+        val_data_loader: Iterable | DataLoader,
+        network: torch.nn.Module,
+        val_epoch_length: int | None = None,
+        non_blocking: bool = False,
+        prepare_batch: Callable = default_prepare_batch,
+        iteration_update: Callable[[Engine, Any], Any] | None = None,
+        inferer: Inferer | None = None,
+        postprocessing: Transform | None = None,
+        key_val_metric: dict[str, Metric] | None = None,
+        additional_val_metrics: dict[str, Metric] | None = None,
+        metric_cmp_fn: Callable = default_metric_cmp_fn,
+        val_handlers: Sequence | None = None,
+        amp: bool = False,
+        event_names: list[str | EventEnum | type[EventEnum]] | None = None,
+        event_to_attr: dict | None = None,
+        decollate: bool = True,
+        to_kwargs: dict | None = None,
+        amp_kwargs: dict | None = None,
+        compile: bool = False,
+        compile_kwargs: dict | None = None,
 ) -> Any:
     """
     Construct a MONAI ``SupervisedTrainer``.
@@ -2773,27 +3054,27 @@ def _monai_supervisedevaluator(
 # %% ../nbs/080_engines.ipynb #d4251f7d
 @register_trainer("monai", "ensemble_evaluator")
 def _monai_ensembleevaluator(
-    device: str | torch.device,
-    val_data_loader: Iterable | DataLoader,
-    networks: Sequence[torch.nn.Module],
-    pred_keys: KeysCollection | None = None,
-    val_epoch_length: int | None = None,
-    non_blocking: bool = False,
-    prepare_batch: Callable = default_prepare_batch,
-    iteration_update: Callable[[Engine, Any], Any] | None = None,
-    inferer: Inferer | None = None,
-    postprocessing: Transform | None = None,
-    key_val_metric: dict[str, Metric] | None = None,
-    additional_val_metrics: dict[str, Metric] | None = None,
-    metric_cmp_fn: Callable = default_metric_cmp_fn,
-    val_handlers: Sequence | None = None,
-    amp: bool = False,
-    mode: ForwardMode | str = ForwardMode.EVAL,
-    event_names: list[str | EventEnum | type[EventEnum]] | None = None,
-    event_to_attr: dict | None = None,
-    decollate: bool = True,
-    to_kwargs: dict | None = None,
-    amp_kwargs: dict | None = None,
+        device: str | torch.device,
+        val_data_loader: Iterable | DataLoader,
+        networks: Sequence[torch.nn.Module],
+        pred_keys: KeysCollection | None = None,
+        val_epoch_length: int | None = None,
+        non_blocking: bool = False,
+        prepare_batch: Callable = default_prepare_batch,
+        iteration_update: Callable[[Engine, Any], Any] | None = None,
+        inferer: Inferer | None = None,
+        postprocessing: Transform | None = None,
+        key_val_metric: dict[str, Metric] | None = None,
+        additional_val_metrics: dict[str, Metric] | None = None,
+        metric_cmp_fn: Callable = default_metric_cmp_fn,
+        val_handlers: Sequence | None = None,
+        amp: bool = False,
+        mode: ForwardMode | str = ForwardMode.EVAL,
+        event_names: list[str | EventEnum | type[EventEnum]] | None = None,
+        event_to_attr: dict | None = None,
+        decollate: bool = True,
+        to_kwargs: dict | None = None,
+        amp_kwargs: dict | None = None,
 ) -> Any:
     """
     Construct a MONAI ``EnsembleEvaluator``.
