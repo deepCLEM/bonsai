@@ -35,6 +35,7 @@ from matplotlib.colors import LinearSegmentedColormap
 # =================================
 # PyTorch
 # =================================
+import torch
 import torch.optim as toptim
 from torch.optim import Optimizer
 from torch.cuda import is_available as is_cuda_available
@@ -105,7 +106,7 @@ def _validate_name(name: str, kind: str) -> str:
     Parameters
     ----------
     name
-        Name to validate.
+        Name to evaluate.
     kind
         Type of registry entry, used in error messages.
 
@@ -404,7 +405,7 @@ def _validate_trainer_config(config: TrainerConfig):
     Parameters
     ----------
     config
-        Trainer configuration to validate.
+        Trainer configuration to evaluate.
 
     Raises
     ------
@@ -633,7 +634,7 @@ class TrainerBackend:
     ``BioTrainer`` API.
 
     The native trainer is constructed eagerly during backend initialization.
-    This ensures that ``trainer``, ``validate``, ``predict``, and other
+    This ensures that ``trainer``, ``evaluate``, ``predict``, and other
     lifecycle methods can operate on an already-configured native trainer.
     """
 
@@ -667,7 +668,7 @@ def _trainer_backend_fit(self):
 
 def _trainer_backend_validate(self):
     raise NotImplementedError(
-        f"{self.__class__.__name__} does not implement validate()."
+        f"{self.__class__.__name__} does not implement evaluate()."
     )
 
 
@@ -1066,16 +1067,23 @@ class BioTrainer:
         """
         return self.backend.fit()
 
-    def validate(self):
+    def evaluate(self, *args, **kwargs):
         """
         Run validation independently of training.
+
+        Parameters
+        ----------
+        *args
+            Positional arguments passed to the backend's evaluate method.
+        **kwargs
+            Keyword arguments passed to the backend's evaluate method.
 
         Returns
         -------
         Any
             Backend-specific validation result.
         """
-        return self.backend.validate()
+        return self.backend.evaluate(*args, **kwargs)
 
     def predict(self, *args, **kwargs):
         """
@@ -1194,23 +1202,249 @@ def _fastai_fit(
         start_epoch=start_epoch,
     )
 
+# %% ../nbs/080_engines.ipynb #1dbf9dbfc33b2475
+def _evaluation_metrics(metrics):
+    """Normalize metric specifications and isolate stateful metrics."""
+    from collections.abc import Mapping
+    from copy import copy
+
+    if metrics is None:
+        return {}
+
+    if isinstance(metrics, Mapping):
+        items = list(metrics.items())
+    else:
+        values = (
+            [metrics]
+            if callable(metrics) or hasattr(metrics, "reset")
+            else list(metrics)
+        )
+        items = []
+        for metric in values:
+            name = getattr(metric, "name", None)
+            if callable(name):
+                name = name()
+            name = name or getattr(
+                metric, "__name__", type(metric).__name__
+            )
+            items.append((name, metric))
+
+    result = {}
+
+    for name, metric in items:
+        if name in result:
+            raise ValueError(
+                f"Duplicate metric name {name!r}; "
+                "use a mapping with unique names."
+            )
+
+        if isinstance(metric, type):
+            instance = metric()
+        else:
+            instance = copy(metric)
+
+        result[name] = instance
+
+    return result
+
+def _evaluation_metric_value(metric, pred, target, output=None):
+    """Evaluate one sample, resetting copied metric state between samples."""
+    from fastai.learner import Metric as FastaiMetric
+    from ignite.metrics import Metric as IgniteMetric
+    from types import SimpleNamespace
+
+    def detach(value):
+        if isinstance(value, torch.Tensor):
+            return value.detach().cpu()
+        if isinstance(value, dict):
+            return {k: detach(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return type(value)(detach(v) for v in value)
+        return value
+
+    with torch.no_grad():
+        if isinstance(metric, IgniteMetric):
+            metric.reset()
+            metric.update(metric._output_transform(output if output is not None else (pred, target)))
+            value = metric.compute()
+        elif isinstance(metric, FastaiMetric):
+            metric.reset()
+            learn = SimpleNamespace(pred=pred, y=target, yb=(target,), to_detach=detach)
+            metric.accumulate(learn)
+            value = metric.value
+        else:
+            if hasattr(metric, "reset"):
+                metric.reset()
+            value = metric(pred, target)
+        return detach(value)
+
+
 # %% ../nbs/080_engines.ipynb #ed399495
-def _fastai_validate(self):
+def _fastai_evaluate(
+    self,
+    dl=None,
+    split: int | str = "val",
+    with_input: bool = False,
+    with_decoded: bool = False,
+    with_loss: bool = False,
+    act=None,
+    inner: bool = False,
+    reorder: bool = True,
+    cbs=None,
+    *,
+    with_metrics: bool = False,
+    metrics=None,
+    save_preds=None,
+    save_targs=None,
+    with_preds: bool = True,
+    with_targs: bool = True,
+    concat_dim: int = 0,
+    pickle_protocol: int = 2,
+) -> dict:
     """
-    Run validation using the configured fastai trainer.
+    Evaluate the model and optionally return predictions, targets, and inputs.
+
+    Parameters
+    ----------
+    dl : DataLoader, optional
+        Dataloader to use for evaluation. When provided, overrides ``split``.
+    split : int or str, default="val"
+        Dataset split to evaluate. Accepts ``0`` or ``"train"`` for the
+        training set, and ``1`` or ``"val"`` for the validation set.
+        Ignored when ``dl`` is provided.
+    with_input : bool, default=False
+        Whether to return inputs alongside predictions.
+    with_decoded : bool, default=False
+        Whether to return decoded predictions.
+    with_loss : bool, default=False
+        Whether to return per-item losses.
+    act : callable, optional
+        Activation function applied to predictions. Defaults to the
+        activation configured by the loss function.
+    inner : bool, default=False
+        Whether to run prediction without the usual progress bar,
+        logger, and temporary callbacks.
+    reorder : bool, default=True
+        Whether to restore predictions to dataset order when applicable.
+    cbs : Callback or sequence of Callback, optional
+        Temporary callbacks used during prediction.
+    save_preds : Path, optional
+        Path to save predictions.
+    save_targs : Path, optional
+        Path to save targets.
+    with_preds : bool, default=True
+        Whether to return predictions.
+    with_targs : bool, default=True
+        Whether to return targets.
+    concat_dim : int, default=0
+        Dimension along which batch outputs are concatenated.
+    pickle_protocol : int, default=2
+        Pickle protocol used when saving predictions and targets.
+
+    with_metrics : bool, default=False
+        Compute metrics independently for every sample.
+    metrics : callable, sequence, or mapping, optional
+        Metrics to compute when with_metrics is True. Defaults to metrics
+        attached to the evaluator (the Learner for fastai). A mapping supplies
+        explicit metric names. An empty collection disables all metrics.
 
     Returns
     -------
-    Any
-        Validation result.
-    """
-    if hasattr(self.trainer, "validate"):
-        return self.trainer.get_preds()
+    dict
+        With with_metrics=True, also contains "metrics": a mapping from metric
+        names to lists of per-sample values. Metrics that are undefined for a
+        single sample retain their native NaN/error behavior. Metrics receive
+        model predictions before loss activation; returned predictions and
+        decoded outputs still use the requested activation.
+        Requested outputs keyed by ``preds``, ``targs``, ``inputs``,
+        ``decoded``, and ``losses``. Disabled outputs are omitted.
+        Decoded predictions are omitted when predictions are unavailable.
 
-    raise RuntimeError(
-        f"Trainer {type(self.trainer).__name__!r} does not provide "
-        "a validation interface."
+    Raises
+    ------
+    ValueError
+        If ``split`` is not a supported index or name.
+    RuntimeError
+        If the trainer does not expose ``get_preds()``.
+    """
+    if not hasattr(self.trainer, "get_preds"):
+        raise RuntimeError(
+            f"Trainer {type(self.trainer).__name__!r} does not provide "
+            "a prediction interface compatible with fastai."
+        )
+
+    if dl is None:
+        if isinstance(split, str):
+            splits = {"train": 0, "val": 1, "valid": 1}
+            try:
+                split = splits[split.lower()]
+            except KeyError:
+                raise ValueError(
+                    f"Invalid split {split!r}. Use 'train', 'val', "
+                    "0, or 1."
+                ) from None
+        elif split not in (0, 1) or isinstance(split, bool):
+            raise ValueError(
+                f"Invalid split {split!r}. Use 'train', 'val', 0, or 1."
+            )
+
+    metric_fns = _evaluation_metrics(
+        self.trainer.metrics if metrics is None else metrics
+    ) if with_metrics else {}
+    if with_metrics and concat_dim != 0:
+        raise ValueError("Per-sample metrics require concat_dim=0.")
+
+    outputs = self.trainer.get_preds(
+        ds_idx=split,
+        dl=dl,
+        with_input=with_input,
+        with_decoded=with_decoded and not with_metrics,
+        with_loss=with_loss,
+        act=(lambda value: value) if with_metrics else act,
+        inner=inner,
+        reorder=reorder,
+        cbs=cbs,
+        save_preds=save_preds,
+        save_targs=save_targs,
+        with_preds=with_preds or with_metrics,
+        with_targs=with_targs or with_metrics,
+        concat_dim=concat_dim,
+        pickle_protocol=pickle_protocol,
     )
+    values = iter(outputs)
+    result = {}
+    if with_input:
+        result["inputs"] = next(values)
+    preds, targs = next(values), next(values)
+    if with_metrics:
+        if preds is None or targs is None:
+            raise ValueError("Per-sample metrics require in-memory predictions and targets.")
+        if len(preds) != len(targs):
+            raise ValueError("Predictions and targets have different sample counts.")
+        # Native fastai metrics receive model outputs before loss activation.
+        result["metrics"] = {
+            name: [
+                _evaluation_metric_value(metric, p.unsqueeze(0), y.unsqueeze(0))
+                for p, y in zip(preds, targs)
+            ]
+            for name, metric in metric_fns.items()
+        }
+        activation = act if act is not None else getattr(self.trainer.loss_func, "activation", None)
+        if activation is not None:
+            preds = activation(preds)
+    if with_preds:
+        result["preds"] = preds
+    if with_targs:
+        result["targs"] = targs
+    if with_decoded and preds is not None:
+        if with_metrics:
+            decode = getattr(self.trainer.loss_func, "decodes", None)
+            result["decoded"] = decode(preds) if decode is not None else preds
+        else:
+            result["decoded"] = next(values)
+    if with_loss:
+        result["losses"] = next(values)
+    return result
 
 
 # %% ../nbs/080_engines.ipynb #917551da
@@ -1287,7 +1521,7 @@ class FastaiTrainerBackend(TrainerBackend):
         return self.trainer.recorder
 
 FastaiTrainerBackend.fit = _fastai_fit
-FastaiTrainerBackend.validate = _fastai_validate
+FastaiTrainerBackend.evaluate = _fastai_evaluate
 FastaiTrainerBackend.predict = _fastai_predict
 
 # %% ../nbs/080_engines.ipynb #0e561fee
@@ -1570,26 +1804,311 @@ def _monai_attach_validation(self):
     validation_handler.attach(self.trainer)
 
 # %% ../nbs/080_engines.ipynb #5358835eb6c10a2d
-def _monai_validate(self):
+def _monai_eval_tensor(value):
+    """Detach a value and return it as a CPU tensor."""
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu()
+    return torch.as_tensor(value)
+
+def _monai_eval_items(value):
+    """Return the individual samples contained in a batched value."""
+    return list(value)
+
+def _monai_eval_dataloader(self, dl, split):
+    """Resolve the evaluation dataloader from an explicit loader or split."""
+    if dl is not None:
+        return dl
+
+    if isinstance(split, str):
+        split = {"train": 0, "val": 1}.get(split.lower())
+
+    if isinstance(split, bool) or not isinstance(split, int) or split not in (0, 1):
+        raise ValueError("split must be 'train', 'val', 0, or 1.")
+
+    return self.config.dls.valid if split else self.config.dls.train
+
+def _monai_evaluator_metrics(evaluator):
+    """Find metrics attached to the evaluator's epoch-completed event."""
+    from ignite.engine import Events
+    from ignite.metrics import Metric
+
+    result = {}
+    for handler, args, kwargs in evaluator._event_handlers.get(Events.EPOCH_COMPLETED, []):
+        metric = getattr(handler, "__self__", None)
+        if isinstance(metric, Metric) and getattr(handler, "__name__", "") == "completed":
+            name = args[-1] if args else kwargs.get("name")
+            if name is not None:
+                result[name] = metric
+    return result
+
+
+# %% ../nbs/080_engines.ipynb #dc8e487a0a7c6506
+def _monai_evaluate(
+    self,
+    max_batches=None,
+    pred_key="pred",
+    label_key="label",
+    output_transform=None,
+    postprocessing=None,
+    *,
+    dl=None,
+    split: int | str = "val",
+    with_input: bool = False,
+    with_decoded: bool = False,
+    with_loss: bool = False,
+    act=None,
+    with_metrics: bool = False,
+    metrics=None,
+    save_preds=None,
+    save_targs=None,
+) -> dict:
     """
-    Run validation using the configured monai evaluator.
+    Evaluate a MONAI model and collect detached, CPU per-sample results.
+
+    Parameters
+    ----------
+    max_batches : int, optional
+        Maximum number of batches to evaluate. Must be a positive integer.
+    pred_key : str, default="pred"
+        Prediction key in the evaluator output.
+    label_key : str, default="label"
+        Target key in the evaluator output.
+    output_transform : callable, optional
+        Extract ``(predictions, targets)`` from the evaluator output.
+        Defaults to extracting ``pred_key`` and ``label_key`` using
+        MONAI's ``from_engine`` helper.
+    postprocessing : callable, optional
+        Transform the extracted ``(predictions, targets)`` pair before
+        storing the results. Must preserve the number of samples.
+    dl : DataLoader, optional
+        Dataloader to evaluate. Overrides ``split`` when provided.
+    split : int or str, default="val"
+        Dataset split to evaluate: ``0`` or ``"train"`` for training,
+        and ``1`` or ``"val"`` for validation. Ignored when ``dl``
+        is provided.
+    with_input : bool, default=False
+        Whether to include the input samples in the results.
+    with_decoded : bool, default=False
+        Whether to include decoded predictions in the results.
+    with_loss : bool, default=False
+        Whether to compute and include per-sample losses.
+    act : callable, optional
+        Activation applied to predictions before storing them.
+        Defaults to the loss function's ``activation`` method, if any.
+    save_preds : path-like, optional
+        Destination for saving the prediction list using ``torch.save``.
+    save_targs : path-like, optional
+        Destination for saving the target list using ``torch.save``.
+    with_metrics : bool, default=False
+        Compute metrics independently for every sample.
+    metrics : callable, sequence, or mapping, optional
+        Metrics to compute when with_metrics is True. Defaults to metrics
+        attached to the evaluator (the Learner for fastai). A mapping supplies
+        explicit metric names. An empty collection disables all metrics.
 
     Returns
     -------
-    Any
-        Validation result.
+    dict
+        With with_metrics=True, also contains "metrics": a mapping from metric
+        names to lists of per-sample values. Metrics that are undefined for a
+        single sample retain their native NaN/error behavior.
+        A dictionary containing ``preds`` and ``targs``, with optional
+        ``inputs``, ``decoded``, and ``losses`` lists. Each list contains
+        one entry per sample, in evaluation order.
+
+    Notes
+    -----
+    Evaluator-level postprocessing has already been applied before this
+    method collects outputs. The ``postprocessing`` argument here is an
+    additional transformation applied to extracted predictions and targets.
+
+    Per-sample losses are computed from the extracted predictions and
+    targets before this method's postprocessing and activation. Spatial
+    loss dimensions are averaged to produce one scalar per sample.
+
+    Activation and decoding are applied with a leading batch dimension.
+    If the loss function does not define ``activation`` or ``decodes``,
+    the corresponding operation is an identity.
+
+    The evaluator's dataloader and epoch length, along with the temporary
+    event handler, are restored even if evaluation raises an exception.
     """
 
-    if hasattr(self, "evaluator"):
-        return self.evaluator.run()
+    from ignite.engine import Events
 
-    raise RuntimeError(
-        f"Trainer {type(self.trainer).__name__!r} does not provide "
-        "a validation interface."
+    if not hasattr(self, "evaluator"):
+        raise RuntimeError(
+            "The trainer does not provide an evaluation interface."
+        )
+
+    if max_batches is not None:
+        if isinstance(max_batches, bool) or not isinstance(max_batches, int):
+            raise TypeError("max_batches must be an integer or None.")
+        if max_batches < 1:
+            raise ValueError("max_batches must be greater than zero.")
+
+    dl = _monai_eval_dataloader(self, dl, split)
+
+    loss_fn = self.config.loss
+    if with_loss and not callable(loss_fn):
+        raise ValueError("with_loss requires a configured loss function.")
+
+    activation = act if act is not None else getattr(loss_fn, "activation", None)
+    decode = getattr(loss_fn, "decodes", None)
+    transform = (
+        output_transform
+        if output_transform is not None
+        else from_engine([pred_key, label_key])
     )
 
+    result = {"preds": [], "targs": []}
+    if with_input:
+        result["inputs"] = []
+    if with_decoded:
+        result["decoded"] = []
+    if with_loss:
+        result["losses"] = []
 
-# %% ../nbs/080_engines.ipynb #74035b917db85868
+    evaluator = self.evaluator
+    metric_fns = _evaluation_metrics(
+        _monai_evaluator_metrics(evaluator) if metrics is None else metrics
+    ) if with_metrics else {}
+    if with_metrics:
+        result["metrics"] = {name: [] for name in metric_fns}
+
+    def collect_outputs(engine):
+        output = engine.state.output
+        pred, label = transform(output)
+
+        # Keep the original samples for loss calculation.
+        raw_preds = _monai_eval_items(pred)
+        raw_labels = _monai_eval_items(label)
+
+        if len(raw_preds) != len(raw_labels):
+            raise ValueError(
+                "Predictions and targets have different sample counts."
+            )
+
+        # Compute per-sample losses before postprocessing and activation.
+        if with_loss:
+            with torch.no_grad():
+                losses = [
+                    _monai_eval_tensor(
+                        loss_fn(p.unsqueeze(0), y.unsqueeze(0))
+                    ).float().mean()
+                    for p, y in zip(raw_preds, raw_labels)
+                ]
+
+        if postprocessing is not None:
+            pred, label = postprocessing((pred, label))
+
+        pred_items = _monai_eval_items(pred)
+        label_items = _monai_eval_items(label)
+
+        if len(pred_items) != len(raw_preds) or len(label_items) != len(raw_labels):
+            raise ValueError(
+                "Postprocessing must preserve sample counts."
+            )
+
+        # MONAI decollated output is typically a list of sample dictionaries.
+        if with_input:
+            images = (
+                output["image"]
+                if isinstance(output, dict)
+                else [item["image"] for item in output]
+            )
+            inputs = _monai_eval_items(images)
+
+            if len(inputs) != len(pred_items):
+                raise ValueError(
+                    "Inputs and predictions have different sample counts."
+                )
+
+        with torch.no_grad():
+            for i, (p, y) in enumerate(zip(pred_items, label_items)):
+                # Apply activation to each prediction independently.
+                p_activated = (
+                    activation(p.unsqueeze(0))[0]
+                    if activation is not None
+                    else p
+                )
+
+                if with_metrics:
+                    # Preserve evaluator output transforms, including auxiliary keys.
+                    sample_output = (
+                        {key: value[i:i+1] for key, value in output.items()}
+                        if isinstance(output, dict)
+                        else [output[i]]
+                    )
+                    for name, metric in metric_fns.items():
+                        result["metrics"][name].append(
+                            _evaluation_metric_value(
+                                metric, raw_preds[i].unsqueeze(0),
+                                raw_labels[i].unsqueeze(0), sample_output
+                            )
+                        )
+
+                result["preds"].append(_monai_eval_tensor(p_activated))
+                result["targs"].append(_monai_eval_tensor(y))
+
+                if with_input:
+                    result["inputs"].append(_monai_eval_tensor(inputs[i]))
+
+                if with_decoded:
+                    decoded = (
+                        decode(p_activated.unsqueeze(0))[0]
+                        if decode is not None
+                        else p_activated
+                    )
+                    result["decoded"].append(_monai_eval_tensor(decoded))
+
+                if with_loss:
+                    result["losses"].append(losses[i])
+
+        if max_batches is not None and engine.state.iteration >= max_batches:
+            engine.terminate()
+
+    # Preserve evaluator state that this method temporarily modifies.
+    old_loader = evaluator.data_loader
+    old_length = evaluator.state.epoch_length
+
+    evaluator.add_event_handler(Events.ITERATION_COMPLETED, collect_outputs)
+
+    try:
+        evaluator.data_loader = dl
+
+        try:
+            loader_length = len(dl)
+        except TypeError:
+            loader_length = None
+
+        evaluator.state.epoch_length = (
+            min(loader_length, max_batches)
+            if loader_length is not None and max_batches is not None
+            else loader_length
+        )
+
+        evaluator.run()
+
+    finally:
+        evaluator.data_loader = old_loader
+        evaluator.state.epoch_length = old_length
+        evaluator.remove_event_handler(
+            collect_outputs, Events.ITERATION_COMPLETED
+        )
+
+    if not result["preds"]:
+        raise RuntimeError("No predictions or targets were collected.")
+
+    if save_preds is not None:
+        torch.save(result["preds"], Path(save_preds))
+
+    if save_targs is not None:
+        torch.save(result["targs"], Path(save_targs))
+
+    return result
+
+# %% ../nbs/080_engines.ipynb #a6f84a4deac769e0
 def _monai_attach_logger(self):
     """Attach a statistics handler to the MONAI training engine.
 
@@ -1704,7 +2223,7 @@ MonaiTrainerBackend._build_trainer = _monai_build_trainer
 MonaiTrainerBackend._build_evaluator = _monai_build_evaluator
 MonaiTrainerBackend._attach_validation = _monai_attach_validation
 MonaiTrainerBackend._attach_logger = _monai_attach_logger
-MonaiTrainerBackend.validate = _monai_validate
+MonaiTrainerBackend.evaluate = _monai_evaluate
 # MonaiTrainerBackend.predict = _monai_predict
 
 # %% ../nbs/080_engines.ipynb #f271a07a

@@ -6,7 +6,7 @@
 __all__ = ['colorlist', 'bonsai_style', 'show_image', 'show_multichannel', 'show_mosaic', 'show_images_grid', 'show_plane',
            'show_slices', 'slice_explorer', 'show_volume', 'show_biodata', 'show_gif', 'plot_metrics',
            'plot_intensity_histogram', 'plot_roc_curve_with_std', 'plot_roc_curve_with_std_interactive', 'format_sig',
-           'plot_histogram_and_kde', 'display_statistics_table', 'plot_dist']
+           'plot_kde', 'display_statistics_table', 'plot_dist']
 
 # %% ../nbs/120_visualize.ipynb #b19af8ae
 # =================================
@@ -48,6 +48,7 @@ from fastai.vision.all import ifnone
 # =================================
 from .utils import *
 from .datasets import cells3d
+from .inference import _calculate_statistics
 
 # %% ../nbs/120_visualize.ipynb #4273c3de
 @delegates(plt.Axes.imshow, keep=True)
@@ -665,7 +666,7 @@ def show_gif(data,                     # A 3D image stack or 4D image sequence t
 
 # %% ../nbs/120_visualize.ipynb #a6845bd1
 colorlist = [
-            'dimgray', 'firebrick', 'goldenrod', 'teal',
+            'teal', 'dimgray', 'firebrick', 'goldenrod',
             '#102e42', 'darkslateblue', '#1c5175',
             'cadetblue', 'steelblue'
         ]
@@ -1269,163 +1270,227 @@ def format_sig(value):
         return f"{value:.2g}"  # Standard notation with 2 significant figures
 
 # %% ../nbs/120_visualize.ipynb #f1df3e7d
-def plot_histogram_and_kde(
+def plot_kde(
     data,
-    stats,
+    stats=None,
     bw_method=0.3,
     fn_name='',
     style=bonsai_style,
     **subplots_kwargs
 ):
     """
-    Plot histogram and KDE with key statistics marked.
+    Plot a histogram, KDE, and horizontal boxplot with key statistics.
+
+    Q1, median, and Q3 are annotated above the boxplot. The mean is
+    indicated on the x-axis, together with mean ﷿﷿﷿﷿﷿﷿ standard deviation.
 
     Parameters
     ----------
     data : array-like
         Input values.
-
     stats : dict
-        Dictionary containing summary statistics.
-
+        Summary statistics, calculated automatically if None.
     bw_method : float or str
         Bandwidth method for gaussian_kde.
-
     fn_name : str
-        Optional subtitle/title suffix.
-
+        Retained for compatibility; not used in the plot.
     style : dict or None
         Temporary matplotlib rcParams style.
-
     **subplots_kwargs
-        Additional kwargs passed to plt.subplots().
+        Additional keyword arguments passed to plt.subplots().
+
+    Returns
+    -------
+    dict
+        Summary statistics.
     """
+    if stats is None:
+        stats = _calculate_statistics(data)
 
     ctx = plt.rc_context(style) if style else nullcontext()
 
     with ctx:
-
-        data = np.asarray(data)
+        data = np.asarray(data).ravel()
 
         kde = gaussian_kde(data, bw_method=bw_method)
-
-        x = np.linspace(
-            np.min(data),
-            np.max(data),
-            1000
-        )
-
+        x = np.linspace(np.min(data), np.max(data), 1000)
         y = kde(x)
 
+        # ---- Colors ----
+        colors = colorlist
+        hist_color = colors[1]
+        kde_color = colors[0]
+        median_color = colors[0]
+        quartile_color = colors[4]
+
+        # ---- Subplots ----
         defaults = dict(figsize=(8, 6))
         defaults.update(subplots_kwargs)
+        defaults.setdefault(
+            'gridspec_kw',
+            {'height_ratios': [2, 4], 'hspace': 0.02}
+        )
 
-        fig, ax = plt.subplots(**defaults)
+        fig, (ax_box, ax) = plt.subplots(
+            2, 1,
+            sharex=True,
+            **defaults
+        )
 
-        gauss_color = 'lightslategrey'
+        # ---- Horizontal boxplot ----
+        ax_box.boxplot(
+            data,
+            vert=False,
+            widths=0.3,
+            patch_artist=True,
+            showmeans=False,
+            boxprops=dict(
+                facecolor=hist_color,
+                alpha=0.3,
+                edgecolor=hist_color
+            ),
+            medianprops=dict(
+                color=median_color,
+                linewidth=2
+            ),
+            whiskerprops=dict(
+                color=hist_color,
+                linewidth=1.5
+            ),
+            capprops=dict(
+                color=hist_color,
+                linewidth=1.5
+            ),
+            flierprops=dict(
+                marker='o',
+                markersize=3,
+                markerfacecolor=colors[5],
+                markeredgecolor=colors[5],
+                alpha=0.5
+            )
+        )
+
+        ax_box.set_yticks([])
+        ax_box.set_ylim(0.1, 2.8)
+        ax_box.grid(False)
+        ax_box.xaxis.grid(False)
+        ax_box.yaxis.grid(False)
+        ax_box.tick_params(
+            axis='x',
+            bottom=False,
+            labelbottom=False
+        )
+
+        for spine in ax_box.spines.values():
+            spine.set_visible(False)
+
+        # ---- Boxplot annotations: Q1, median, Q3 only ----
+        annotations = [
+            ('Q1', stats['Q1'], quartile_color, 1.75),
+            ('Median', stats['Median'], median_color, 2.35),
+            ('Q3', stats['Q3'], quartile_color, 1.75),
+        ]
+
+        data_range = np.ptp(data)
+        min_sep = data_range * 0.12 if data_range > 0 else 1.0
+        placed = []
+
+        for name, value, color, ypos in sorted(
+            annotations,
+            key=lambda item: item[1]
+        ):
+            xpos = value
+
+            for prev_x, prev_y in placed:
+                if (
+                    abs(xpos - prev_x) < min_sep
+                    and abs(ypos - prev_y) < 0.5
+                ):
+                    xpos = prev_x + min_sep
+
+            placed.append((xpos, ypos))
+
+            ax_box.annotate(
+                f'{name}: {format_sig(value)}',
+                xy=(value, 1.0),
+                xycoords='data',
+                xytext=(xpos, ypos),
+                textcoords='data',
+                ha='center',
+                va='bottom',
+                fontsize=9,
+                color=color,
+                arrowprops=dict(
+                    arrowstyle='-',
+                    color=color,
+                    lw=0.8
+                ),
+                annotation_clip=False
+            )
 
         # ---- Histogram ----
-
         ax.hist(
             data,
             bins=30,
             density=True,
-            color='darkgray',
-            edgecolor=None,
+            color=hist_color,
+            edgecolor=colors[6],
             alpha=0.5
         )
 
         # ---- KDE ----
-
-        ax.plot(
-            x,
-            y,
-            color=gauss_color,
-            lw=2
-        )
-
+        ax.plot(x, y, color=kde_color, lw=2)
         ax.fill_between(
             x,
             y,
-            color=gauss_color,
-            alpha=0.3
+            color=kde_color,
+            alpha=0.25
         )
 
-        # ---- Statistics lines ----
+        # ---- Statistical x-axis ticks ----
+        xmin = stats['Min']
+        xmax = stats['Max']
+        mean = stats['Mean']
+        std = stats['Standard Deviation']
 
-        ax.axvline(
-            stats["Mean"],
-            color='crimson',
-            linestyle='--',
-            linewidth=1.5,
-            label=f'Mean: {format_sig(stats["Mean"])}'
-        )
+        tick_data = [
+            (xmin, f'Min\n{format_sig(xmin)}'),
+            (mean - std, f'$\\mu$ - $\\sigma$\n{format_sig(mean - std)}'),
+            (mean, f'$\\mu$\n{format_sig(mean)}'),
+            (mean + std, f'$\\mu$ + $\\sigma$\n{format_sig(mean + std)}'),
+            (xmax, f'Max\n{format_sig(xmax)}'),
+        ]
 
-        ax.axvline(
-            stats["Median"],
-            color='steelblue',
-            linestyle='--',
-            linewidth=1.5,
-            label=f'Median: {format_sig(stats["Median"])}'
-        )
+        tick_data.sort(key=lambda item: item[0])
 
-        ax.axvline(
-            stats["Q1"],
-            color='firebrick',
-            linestyle=':',
-            linewidth=1.5,
-            label=f'Q1: {format_sig(stats["Q1"])}'
-        )
+        # Merge coincident tick positions to avoid duplicate ticks.
+        merged_ticks = []
+        for value, label in tick_data:
+            if merged_ticks and np.isclose(
+                value, merged_ticks[-1][0], rtol=1e-5, atol=1e-8
+            ):
+                existing_value, existing_label = merged_ticks[-1]
+                merged_ticks[-1] = (
+                    existing_value,
+                    f'{existing_label.split(chr(10))[0]} / '
+                    f'{label.split(chr(10))[0]}\n{format_sig(value)}'
+                )
+            else:
+                merged_ticks.append((value, label))
 
-        ax.axvline(
-            stats["Q3"],
-            color='firebrick',
-            linestyle=':',
-            linewidth=1.5,
-            label=f'Q3: {format_sig(stats["Q3"])}'
-        )
-
-        # ---- Text annotations ----
-
-        ax.text(
-            stats["Mean"] + stats["Standard Deviation"],
-            0.1,
-            f'Std Dev: {format_sig(stats["Standard Deviation"])}',
-            color='black',
-            fontsize=10
-        )
-
-        ax.text(
-            stats["Min"],
-            0.02,
-            f'Min: {format_sig(stats["Min"])}',
-            color='black',
-            fontsize=10,
-            ha='center'
-        )
-
-        ax.text(
-            stats["Max"],
-            0.02,
-            f'Max: {format_sig(stats["Max"])}',
-            color='black',
-            fontsize=10,
-            ha='center'
-        )
+        ticks, labels = zip(*merged_ticks)
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(labels)
+        ax.tick_params(axis='x', labelsize=8, pad=6)
 
         # ---- Labels ----
+        # ax.set_xlabel('Value')
+        ax.set_ylabel('Density')
 
-        ax.set_title(
-            f"Combined Histogram and KDE with Statistics\n{fn_name}"
-        )
-
-        ax.set_xlabel("Value")
-        ax.set_ylabel("Density")
-
-        ax.legend()
-
-        plt.tight_layout()
         plt.show()
+
+    return stats
+
 
 # %% ../nbs/120_visualize.ipynb #9389adbb
 def display_statistics_table(stats, fn_name='', as_dataframe=True):
