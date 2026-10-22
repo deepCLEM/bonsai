@@ -8,7 +8,7 @@ __all__ = ['colorlist', 'coolwarm', 'warm_cmap', 'teal_cmap', 'bonsai_style', 's
            'plot_metrics', 'plot_intensity_histogram', 'plot_roc_curve_with_std', 'plot_roc_curve_with_std_interactive',
            'format_sig', 'plot_stats', 'display_statistics_table', 'plot_dist']
 
-# %% ../nbs/120_visualize.ipynb #b19af8ae
+# %% ../nbs/120_visualize.ipynb #30cdf5ef6ccd34f5
 # =================================
 # Standard libraries
 # =================================
@@ -50,7 +50,7 @@ from fastai.vision.all import ifnone
 from .utils import *
 from .datasets import cells3d
 
-# %% ../nbs/120_visualize.ipynb #4273c3de
+# %% ../nbs/120_visualize.ipynb #f76745b944c3a5b
 @delegates(plt.Axes.imshow, keep=True)
 def show_image(values,  # A 2D or 3D array of pixel values representing the image.
                cmap='gray',  # The colormap to use for displaying the image. Default is 'gray' for grayscale images.
@@ -83,7 +83,7 @@ def show_image(values,  # A 2D or 3D array of pixel values representing the imag
     # Display the figure with all defined elements
     plt.show()
 
-# %% ../nbs/120_visualize.ipynb #501a869c
+# %% ../nbs/120_visualize.ipynb #90b52108278a8c4b
 @delegates(plt.Axes.imshow, keep=True, but=['shape', 'imlim'])
 def show_multichannel(
         img,  # A tensor or numpy array representing a multi-channel image.
@@ -141,7 +141,8 @@ def show_multichannel(
 
     # Create axis if not provided
     ax = ifnone(ax, ctx)
-    if ax is None:
+    owns_figure = ax is None
+    if owns_figure:
         _, ax = plt.subplots(figsize=figsize)
 
     # RGB
@@ -213,17 +214,19 @@ def show_multichannel(
 
     ax.axis('off')
 
-    plt.show()
+    if owns_figure:
+        plt.show()
 
     return ax
 
-# %% ../nbs/120_visualize.ipynb #cdc50b00
+
+# %% ../nbs/120_visualize.ipynb #3f80c412b59db274
 # Utility function for determining figure bounds
 def _fig_bounds(x):
     r = x // 8
     return min(15, max(1, r))
 
-# %% ../nbs/120_visualize.ipynb #ba0b8261
+# %% ../nbs/120_visualize.ipynb #4e3118f006c99b55
 @delegates(plt.Axes.imshow, keep=True)
 def show_mosaic(t: np.ndarray | torchTensor,  # 3D image to plot
                 axis: int = 0,  # axis to split 3D array to 2D images
@@ -271,7 +274,7 @@ def show_mosaic(t: np.ndarray | torchTensor,  # 3D image to plot
     plt.imshow(grid[0, :, :], cmap=cmap, alpha=alpha, **kwargs)
     plt.axis('off')
 
-# %% ../nbs/120_visualize.ipynb #ad679cb0
+# %% ../nbs/120_visualize.ipynb #62b0f0f75e505385
 @delegates(plt.Axes.imshow, keep=True, but=['shape', 'imlim'])
 def show_images_grid(images,  # A list of images to display.
                      ax=None,  # The Matplotlib axis to use for plotting.
@@ -343,7 +346,7 @@ def show_images_grid(images,  # A list of images to display.
 
     return ax
 
-# %% ../nbs/120_visualize.ipynb #4e79058f
+# %% ../nbs/120_visualize.ipynb #ffb63aaac1bd4f78
 def show_plane(ax,  # The axis object to display the slice on.
                plane,  # A 2D numpy array representing the slice of the image tensor.
                cmap="gray",  # Colormap to use for displaying the image.
@@ -367,7 +370,7 @@ def show_plane(ax,  # The axis object to display the slice on.
         ax.axvline(lines[1], color=linecolor, linestyle=linestyle)
 
 
-# %% ../nbs/120_visualize.ipynb #92ed68f5
+# %% ../nbs/120_visualize.ipynb #50e8d38afddb7065
 @delegates(show_plane, keep=True)
 def show_slices(data,  # A 3D numpy array representing the image tensor.
                 planes=None,  # A tuple containing the indices of the planes to visualize.
@@ -397,7 +400,7 @@ def show_slices(data,  # A 3D numpy array representing the image tensor.
 
         plt.show()
 
-# %% ../nbs/120_visualize.ipynb #0078d8cd
+# %% ../nbs/120_visualize.ipynb #a04a8d79ce77e052
 def slice_explorer(data,  # A 3D numpy array representing the image tensor.
                    order='CZYX',  # The order of dimensions in the data.
                    **kwargs):
@@ -444,7 +447,7 @@ def slice_explorer(data,  # A 3D numpy array representing the image tensor.
     # Display the plot using Plotly's show function
     pio.show(fig)
 
-# %% ../nbs/120_visualize.ipynb #5e7e936b
+# %% ../nbs/120_visualize.ipynb #b625cb6d60961c70
 @delegates(go.Figure)
 def show_volume(values,  # A 3D array of pixel values representing the volume.
                 opacity=0.1,  # Opacity level for the surfaces in the volume plot.
@@ -484,7 +487,7 @@ def show_volume(values,  # A 3D array of pixel values representing the volume.
     # Display the figure in a new window
     fig.show()
 
-# %% ../nbs/120_visualize.ipynb #4a9ae857
+# %% ../nbs/120_visualize.ipynb #82a0ca12d8d11746
 def show_biodata(
         data,
         channel_threshold=4,
@@ -530,7 +533,7 @@ def show_biodata(
 
     raise ValueError(f"Unsupported input shape {x.shape}. Expected 2D, 3D, or 4D data.")
 
-# %% ../nbs/120_visualize.ipynb #362e7518
+# %% ../nbs/120_visualize.ipynb #72adb41639c6356d
 def show_gif(data,  # A 3D image stack or 4D image sequence to convert into a GIF.
              path=None,  # Optional filesystem path to save the resulting GIF.
              fps=5,  # Frames per second for the animation.
@@ -666,14 +669,14 @@ def show_gif(data,  # A 3D image stack or 4D image sequence to convert into a GI
     except Exception:
         return gif_bytes
 
-# %% ../nbs/120_visualize.ipynb #a6845bd1
+# %% ../nbs/120_visualize.ipynb #16ebf632bb5cc512
 colorlist = [
     'teal', 'dimgray', 'firebrick', 'goldenrod',
     '#102e42', 'darkslateblue', '#1c5175',
     'cadetblue', 'steelblue'
 ]
 
-# %% ../nbs/120_visualize.ipynb #f4ed19399798e6df
+# %% ../nbs/120_visualize.ipynb #2fe4a1419629d73
 # Retrieve the 'coolwarm' colormap
 coolwarm = plt.get_cmap('coolwarm')
 # Create a new colormap using only the warm colors
@@ -686,7 +689,7 @@ teal_cmap = LinearSegmentedColormap.from_list(
     N=256,
 )
 
-# %% ../nbs/120_visualize.ipynb #b881dfa8
+# %% ../nbs/120_visualize.ipynb #fe39172327855abc
 bonsai_style = {
     'font.family': 'sans-serif',
     'font.size': 10,
@@ -719,7 +722,7 @@ bonsai_style = {
     )
 }
 
-# %% ../nbs/120_visualize.ipynb #c1ac5775
+# %% ../nbs/120_visualize.ipynb #fb28d275cfc534e8
 def plot_metrics(
         learn,
         style=bonsai_style,
@@ -883,7 +886,7 @@ def plot_metrics(
         plt.tight_layout()
         plt.show()
 
-# %% ../nbs/120_visualize.ipynb #74d544d6
+# %% ../nbs/120_visualize.ipynb #41ba949d43849257
 def plot_intensity_histogram(
         image,
         threshold=None,
@@ -1044,7 +1047,7 @@ def plot_intensity_histogram(
         plt.tight_layout()
         plt.show()
 
-# %% ../nbs/120_visualize.ipynb #a56835d7
+# %% ../nbs/120_visualize.ipynb #37920027afbf3751
 def plot_roc_curve_with_std(
         y_probs_folds,
         y_true_folds,
@@ -1148,7 +1151,7 @@ def plot_roc_curve_with_std(
 
     plt.show()
 
-# %% ../nbs/120_visualize.ipynb #c46921a5
+# %% ../nbs/120_visualize.ipynb #4e0c071742516d81
 def plot_roc_curve_with_std_interactive(
         y_probs_folds,
         y_true_folds,
@@ -1270,7 +1273,7 @@ def plot_roc_curve_with_std_interactive(
 
     return fig
 
-# %% ../nbs/120_visualize.ipynb #44771418
+# %% ../nbs/120_visualize.ipynb #12cc3bbd4234473b
 def format_sig(value):
     """
     Format numbers with two significant digits.
@@ -1282,7 +1285,7 @@ def format_sig(value):
     else:
         return f"{value:.2g}"  # Standard notation with 2 significant figures
 
-# %% ../nbs/120_visualize.ipynb #f1df3e7d
+# %% ../nbs/120_visualize.ipynb #b7ba71cc79726dcd
 def plot_stats(
         data,
         stats=None,
@@ -1512,7 +1515,7 @@ def plot_stats(
 
     return stats
 
-# %% ../nbs/120_visualize.ipynb #9389adbb
+# %% ../nbs/120_visualize.ipynb #8a9cb91640606964
 def display_statistics_table(stats, fn_name='', as_dataframe=True):
     """
     Display a table of the key statistics.
@@ -1541,7 +1544,7 @@ def display_statistics_table(stats, fn_name='', as_dataframe=True):
         header.set_text_props(weight="bold")
         plt.show()
 
-# %% ../nbs/120_visualize.ipynb #5b42d2c4
+# %% ../nbs/120_visualize.ipynb #22222d6def4e0cfc
 def plot_dist(
         values,
         marginal="box",

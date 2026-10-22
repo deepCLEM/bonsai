@@ -25,8 +25,8 @@ from tqdm import tqdm
 # =================================
 # Bioimage IO
 # =================================
-from bioio import BioImage as AICSImage
-from bioio import Writer as OmeTiffWriter
+# from bioio import BioImage as AICSImage
+# from bioio import Writer as OmeTiffWriter
 
 # =================================
 # PyTorch
@@ -271,14 +271,21 @@ def get_noisy_pair(fn):
     tmp = get_image_files(fn.parent, recurse=False)
     
     # Select a random file from the list, ensuring it's not the original file
-    fn2 = tmp[randint(0, len(tmp) - 1)]
+    fn2 = tmp[random.randint(0, len(tmp) - 1)]
     while fn2 == fn:
-        fn2 = tmp[randint(0, len(tmp) - 1)]
+        fn2 = tmp[random.randint(0, len(tmp) - 1)]
     
     return fn2
 
 
 # %% ../../nbs/023_data.tfms.ipynb #8a3daf33
+def _batch_grid(samples, ctxs, max_n, nrows, ncols, figsize, double=False):
+    if ctxs is None:
+        n = min(len(samples), max_n)
+        ctxs = get_grid(n, nrows=nrows, ncols=ncols, figsize=figsize, double=double) if n > 0 else []
+    return np.asarray(ctxs, dtype=object).reshape(-1).tolist()
+
+
 @typedispatch
 def show_batch(x: BioImageBase,     # The input image data.
                y: BioImageBase,     # The target image data.
@@ -296,15 +303,10 @@ def show_batch(x: BioImageBase,     # The input image data.
     Returns:
         List[Context]: A list of contexts after displaying the images and targets.
     """
-    # If ctxs are not provided, create new ones using get_grid()
-    if ctxs is None:
-        ctxs = get_grid(min(len(samples), max_n), nrows=nrows, ncols=ncols, figsize=figsize, double=True)
-    
-    # Loop through the images and targets in pairs (x and y)
-    for i in range(2):
-        # Display each image-target pair in a specific context
-        ctxs[i::2] = [b.show(ctx=c, **kwargs) for b, c, _ in zip(samples.itemgot(i), ctxs[i::2], range(max_n))]
-    
+    ctxs = _batch_grid(samples, ctxs, max_n, nrows, ncols, figsize, double=True)
+    for (img, target), left, right, _ in zip(samples, ctxs[::2], ctxs[1::2], range(max_n)):
+        img.show(ctx=left, **kwargs)
+        target.show(ctx=right, **kwargs)
     return ctxs
 
 
@@ -312,15 +314,25 @@ def show_batch(x: BioImageBase,     # The input image data.
 from fastai.vision.all import TensorCategory
 
 # %% ../../nbs/023_data.tfms.ipynb #b389c760
+def _label_value(label, vocab=None):
+    decoded = getattr(label, "decoded", None)
+    if decoded is not None:
+        return decoded
+    if isinstance(label, (np.ndarray, torchTensor, np.generic)):
+        label = label.tolist()
+    return vocab[label] if vocab is not None and isinstance(label, (int, np.integer)) else label
+
+
 @typedispatch
 def show_batch(x: BioImageBase,      # The input image data.
-               y: TensorCategory,    # The target data (categorical labels).
+               y,          # The target data (categorical labels).
                samples,              # List of sample indices to display.
                ctxs=None,            # List of contexts for displaying images. If None, create new ones using get_grid().
                max_n: int=9,        # Maximum number of samples to display. Default is 9.
                nrows: int|None=None,      # Number of rows in the grid if ctxs are not provided.
                ncols: int|None=None,      # Number of columns in the grid if ctxs are not provided.
                figsize: tuple|None=None,  # Figure size for the image display.
+               vocab=None,
                **kwargs,             # Additional keyword arguments to pass to the show method of BioImageBase.
                ):
     """
@@ -329,116 +341,39 @@ def show_batch(x: BioImageBase,      # The input image data.
     Returns:
         List[Context]: A list of contexts after displaying the images and their labels.
     """
-    # If ctxs are not provided, create new ones using get_grid()
-    if ctxs is None: 
-        ctxs = get_grid(min(len(samples), max_n), nrows=nrows, ncols=ncols, figsize=figsize)
-    
-    # Flatten the context in case it returns as an array
-    if isinstance(ctxs, np.ndarray):
-        ctxs = ctxs.flatten()
-    
-    # Extract the input images and the corresponding labels
-    xs, ys = samples.itemgot(0), samples.itemgot(1)
-
-    # Loop through the images and labels
-    for i in range(len(xs)):
-        # Display each input image
-        ctxs[i] = xs[i].show(ctx=ctxs[i], title=f"Label: {ys[i]}", **kwargs)
-    
+    ctxs = _batch_grid(samples, ctxs, max_n, nrows, ncols, figsize)
+    for (img, label), ax, _ in zip(samples, ctxs, range(max_n)):
+        decoded = _label_value(label, vocab)
+        img.show(ctx=ax, **kwargs)
+        ax.set_title(f"Label: {decoded}")
     return ctxs
+
 
 # %% ../../nbs/023_data.tfms.ipynb #55a7370c
 def _to_bioimage(x):
-    
+    if isinstance(x, BioImageBase):
+        return x
+    if x.ndim == 2:
+        x = x[None]
     cls = BioImage if x.shape[0] == 1 else BioMultiChannel
 
-    if isinstance(x, (MetaTensor, torchTensor)):
+    if isinstance(x, MetaTensor):
         return cls.from_metatensor(x)
+
+    if isinstance(x, torchTensor):
+        return cls(x)
 
     if isinstance(x, np.ndarray):
         return cls.from_numpy(x)
 
     return x
 
-# %% ../../nbs/023_data.tfms.ipynb #bee716ba
-@typedispatch
-def show_batch(
-    x: list[MetaTensor|torchTensor],   # inputs
-    y: MetaTensor|torchTensor|list,    # targets
-    samples: list|None=None,           # List of sample indices to display.
-    ctxs=None,                         # List of contexts for displaying images. If None, create new ones using get_grid().
-    max_n: int=9,                      # Maximum number of samples to display. Default is 9.
-    nrows: int|None=None,      # Number of rows in the grid if ctxs are not provided.
-    ncols: int|None=None,      # Number of columns in the grid if ctxs are not provided.
-    figsize: tuple|None=None,  # Figure size for the image display.
-    vocab=None,
-    **kwargs
-):
-    """
-    Show `max_n` inputs and targets from a batch.
-
-    Supports both MetaTensor and torchTensor inputs.
-    Converts to BioImage/BioImageMulti automatically.
-    """
-
-    # -------------------------
-    # Create samples if not provided
-    # -------------------------
-    if samples is None:
-
-        # Ensure x is a list
-        if isinstance(x, (MetaTensor, torchTensor)):
-            if x.ndim == 4:        # batch tensor
-                x = [x[i] for i in range(len(x))]
-            else:
-                x = [x]
-
-        elif isinstance(x, list) and isinstance(x[0], (MetaTensor, torchTensor)) and x[0].ndim > 3:
-            # flatten batch dimension
-            x = [t[i] for t in x for i in range(t.shape[0])]
-
-        # -------------------------
-        # Convert tensors → BioImage
-        # -------------------------
-        x_bio = [_to_bioimage(t) for t in x]
-
-        # -------------------------
-        # Convert y to list
-        # -------------------------
-        if isinstance(y, (MetaTensor, torchTensor)):
-            if y.ndim == 0:
-                y_list = [int(y)]
-            else:
-                y_list = [int(y[i]) for i in range(len(y))]
-        else:
-            y_list = list(y)
-
-        if vocab is not None:
-            y_list = [vocab[o] for o in y_list]
-
-        samples = L(zip(x_bio, y_list))
-
-    # -------------------------
-    # Create grid if ctxs not provided
-    # -------------------------
-    if ctxs is None:
-        ctxs = get_grid(min(len(samples), max_n), nrows=nrows, ncols=ncols, figsize=figsize)
-
-    # -------------------------
-    # Display
-    # -------------------------
-    for i, ((img, lbl), ax) in enumerate(zip(samples, ctxs)):
-        if i >= max_n: break
-        img.show(ctx=ax, **kwargs)
-        ax.set_title(str(lbl), fontsize=10)
-
-    return ctxs
 
 # %% ../../nbs/023_data.tfms.ipynb #7ee4aff1
 @typedispatch
 def show_batch(
-    x: list[np.ndarray],
-    y: list,
+    x: list | np.ndarray | torchTensor,
+    y,
     samples=None,
     ctxs=None,
     max_n=9,
@@ -448,175 +383,90 @@ def show_batch(
     vocab=None,
     **kwargs,
 ):
+    """Handle raw arrays/tensors; BioImage inputs use the more specific dispatches."""
     if samples is None:
-        x = x[:max_n]
+        if isinstance(x, (np.ndarray, torchTensor)) and x.ndim <= 3:
+            x = [x]
+        if getattr(y, "ndim", None) == 0:
+            y = [y]
+        samples = list(zip(x, y))
+    samples = [(_to_bioimage(img),
+                _to_bioimage(label) if isinstance(label, (np.ndarray, torchTensor)) and label.ndim >= 2 else label)
+               for img, label in samples[:max(0, max_n)]]
+    if not samples:
+        return _batch_grid(samples, ctxs, max_n, nrows, ncols, figsize)
+    if not isinstance(samples[0][1], BioImageBase):
+        kwargs["vocab"] = vocab
+    return show_batch(*samples[0], samples, ctxs=ctxs, max_n=max_n,
+                      nrows=nrows, ncols=ncols, figsize=figsize, **kwargs)
 
-        x_bio = [_to_bioimage(t) for t in x]
-
-        y_list = []
-        for value in y[:len(x)]:
-            if isinstance(value, np.generic):
-                value = value.item()
-            elif isinstance(value, np.ndarray) and value.ndim == 0:
-                value = value.item()
-
-            y_list.append(value)
-
-        if vocab is not None:
-            y_list = [vocab[o] for o in y_list]
-
-        samples = list(zip(x_bio, y_list))
-
-    if ctxs is None:
-        ctxs = get_grid(
-            min(len(samples), max_n),
-            nrows=nrows,
-            ncols=ncols,
-            figsize=figsize,
-        )
-
-    if isinstance(ctxs, np.ndarray):
-        ctxs = ctxs.flatten()
-
-    for i, ((img, lbl), ax) in enumerate(zip(samples, ctxs)):
-        if i >= max_n:
-            break
-
-        img.show(ctx=ax, **kwargs)
-        ax.set_title(str(lbl), fontsize=10)
-
-    return ctxs
 
 # %% ../../nbs/023_data.tfms.ipynb #c5cef986
 @typedispatch
-def show_results(x: BioImageBase, # The input image data.
-                 y: BioImageBase, # The target label data.
-                 samples, # List of sample indices to display.
-                 outs, # List of output predictions corresponding to the samples.
-                 ctxs=None, # List of contexts for displaying images. If None, create new ones using get_grid().
-                 max_n: int=10, # Maximum number of samples to display.
-                 figsize: tuple|None=None, # Figure size for the image display.
-                 **kwargs, # Additional keyword arguments to pass to the show method of BioImageBase.
-                 ):
-    """
-    Display a batch of input images along with their predicted and target labels.
-   
-    Returns: \n
-        List[Context]: A list of contexts after displaying the images and labels.
-    """
-    # If ctxs are not provided, create new ones using get_grid() with a specific title and size
-    if ctxs is None: 
-        ctxs = get_grid(3 * min(len(samples), max_n), ncols=3, figsize=figsize, title='Input/Target/Prediction')
-    
-    # Loop through the images and display them in a specific context for input (x) and output predictions (outs)
-    for i in range(2):
-        ctxs[i::3] = [b.show(ctx=c, **kwargs) for b, c, _ in zip(samples.itemgot(i), ctxs[i::3], range(max_n))]
-    
-    # Display the target labels (y) in a specific context after the input images
-    ctxs[2::3] = [b.show(ctx=c, **kwargs) for b, c, _ in zip(outs.itemgot(0), ctxs[2::3], range(max_n))]
-    
+def show_results(x: BioImageBase, y: BioImageBase, samples, outs, ctxs=None,
+                 max_n=10, figsize=None, nrows=None, ncols=3, **kwargs):
+    """Display input, target, and decoded image prediction in three columns."""
+    n = max(0, min(len(samples), len(outs), max_n))
+    ctxs = _batch_grid(range(3 * n), ctxs, 3 * n, nrows, ncols, figsize)
+    pair_ctxs = [ax for i, ax in enumerate(ctxs) if i % 3 != 2]
+    show_batch(x, y, samples[:n], ctxs=pair_ctxs, max_n=n, **kwargs)
+    for out, ax in zip(outs[:n], ctxs[2::3]):
+        _to_bioimage(out[0]).show(ctx=ax, **kwargs)
+    for ax, title in zip(ctxs, ("Input", "Target", "Prediction")):
+        ax.set_title(title)
     return ctxs
 
 
 # %% ../../nbs/023_data.tfms.ipynb #02818581
 @typedispatch
-def show_results(x: BioImageBase,       # The input image data.
-                y: TensorCategory,      # The target data (categorical labels).
-                samples,                # List of sample indices to display.
-                outs,                   # List of output predictions corresponding to the samples.
-                ctxs=None,              # List of contexts for displaying images. If None, create new ones using get_grid().
-                max_n: int=10,               # Maximum number of samples to display.
-                nrows: int|None=None,        # Number of rows in the grid if ctxs are not provided.
-                ncols: int|None=None,        # Number of columns in the grid if ctxs are not provided.
-                figsize: tuple|None=None,           # Figure size for the image display.
-                **kwargs,               # Additional keyword arguments to pass to the show method of BioImageBase.
-                ):
-    """
-    Display a batch of input images along with their predicted and target labels.
-   
-    Returns: \n
-        List[Context]: A list of contexts after displaying the images and labels.
-    """
-    # If ctxs are not provided, create new ones using get_grid() with a specific title and size
-    if ctxs is None: 
-        ctxs = get_grid(min(len(samples), max_n), nrows=nrows, ncols=ncols, figsize=figsize, title='Target/Prediction')
-    
-    # Loop through the images and display them in a specific context for input (x) and output predictions (outs)
-    for i in range(2):
-        ctxs = [b.show(ctx=c, **kwargs) for b,c,_ in zip(samples.itemgot(i),ctxs,range(max_n))]
-    
-    # Display predictions and target labels (y) in green, when matching, or red, otherwise.
-    ctxs = [r.show(ctx=c, color='green' if b==r else 'red', **kwargs)
-            for b,r,c,_ in zip(samples.itemgot(1), outs.itemgot(0), ctxs, range(max_n))]
-    
+def show_results(x: BioImageBase, y, samples, outs, ctxs=None, max_n=10,
+                 nrows=None, ncols=None, figsize=None, vocab=None, **kwargs):
+    """Show decoded target / prediction titles, green for matches and red otherwise."""
+    n = max(0, min(len(samples), len(outs), max_n))
+    ctxs = show_batch(x, y, samples[:n], ctxs=ctxs, max_n=n,
+                      nrows=nrows, ncols=ncols, figsize=figsize, vocab=vocab, **kwargs)
+    for (_, label), out, ax in zip(samples[:n], outs[:n], ctxs):
+        label_vocab = vocab if vocab is not None else getattr(label, "vocab", None)
+        target = _label_value(label, label_vocab)
+        pred = out[0]
+        if (isinstance(label, (BioOneHot, BioLabelMulti, BioOneHotMulti))
+                and getattr(pred, "decoded", None) is None and getattr(pred, "ndim", 0) == 1 and label_vocab is not None):
+            values = _label_value(pred)
+            indices = values if isinstance(label, BioLabelMulti) else [i for i, value in enumerate(values) if value]
+            pred = [label_vocab[i] for i in indices]
+            if isinstance(target, str) and len(pred) == 1:
+                pred = pred[0]
+        pred = _label_value(pred, label_vocab)
+        matches = set(target) == set(pred) if isinstance(label, (BioLabelMulti, BioOneHotMulti)) else np.array_equal(target, pred)
+        ax.set_title(f"{target} / {pred}", color='green' if matches else 'red')
     return ctxs
 
 
 # %% ../../nbs/023_data.tfms.ipynb #96d2aa11
 @typedispatch
-def show_results(dl: torchDataLoader,         # DataLoader containing the batch and optional vocab
-                 batch: list,                # The batch of data from the DataLoader (inputs, targets)
-                 preds: MetaTensor|torchTensor,          # Model predictions corresponding to the batch
-                 ctxs=None,                  # Optional: list of axes to plot on. If None, created automatically
-                 max_n: int=10,              # Maximum number of samples to display
-                 nrows: int|None=None,       # Number of rows in the grid if ctxs are not provided
-                 ncols: int|None=None,       # Number of columns in the grid if ctxs are not provided
-                 figsize: tuple|None=None,   # Figure size for the display grid
-                 **kwargs                     # Additional keyword arguments passed to `BioImage.show`
-                ):
+def show_results(dl: torchDataLoader, batch: list | tuple, preds: torchTensor | np.ndarray | list,
+                 ctxs=None, max_n=10, nrows=None, ncols=None, figsize=None, **kwargs):
+    """Adapt raw batched images and decoded predictions to the BioImage dispatches.
+
+    For class-index targets, a (batch, classes) prediction is reduced with argmax.
     """
-    Display a batch of images with their ground truth labels and predicted labels.
-
-    This version supports `BioImage` or `BioImageMulti` depending on input channels,
-    and will use `dl.vocab` to convert integer class indices to class names if available.
-
-    Args:
-        dl (torchDataLoader): DataLoader providing the batch and optional `vocab`.
-        batch (list): A tuple/list `(x, y)` containing input tensors and labels.
-        preds (MetaTensor): Model outputs for the batch.
-        ctxs (list, optional): Predefined plotting axes. If None, axes are created automatically.
-        max_n (int): Maximum number of samples to display.
-        nrows (int | None): Number of rows in the grid if ctxs not provided.
-        ncols (int | None): Number of columns in the grid if ctxs not provided.
-        figsize (tuple | None): Figure size for the display grid.
-        **kwargs: Additional arguments to pass to `BioImage.show`.
-
-    Returns:
-        list: List of matplotlib axes containing the displayed images with labels.
-    """
-
     x, y = batch
+    n = max(0, min(len(x), len(y), len(preds), max_n))
+    samples = [(_to_bioimage(img), _to_bioimage(label) if getattr(label, "ndim", 0) >= 2 else label)
+               for img, label in zip(x[:n], y[:n])]
+    if not samples:
+        return _batch_grid([], ctxs, 0, nrows, ncols, figsize)
+    if not isinstance(samples[0][1], BioImageBase):
+        kwargs.setdefault("vocab", getattr(dl, "vocab", None))
+        if getattr(preds, "ndim", 0) == 2 and getattr(y[0], "ndim", 0) == 0:
+            preds = preds.argmax(-1)
+    else:
+        ncols = ncols or 3
+    outs = [(pred,) for pred in preds[:n]]
+    return show_results(*samples[0], samples, outs, ctxs=ctxs, max_n=n,
+                        nrows=nrows, ncols=ncols,
+                        figsize=figsize, **kwargs)
 
-    # Choose the right BioImage class based on channels
-    cls = BioImage if x[0].shape[0]==1 else BioMultiChannel
-    x_bio = [cls.from_metatensor(t) for t in x]
-
-    # Convert predictions and labels to lists
-    y_list = y.tolist()
-    preds_list = TensorCategory(preds).tolist()
-
-    # Map indices to class names if DataLoader has vocab
-    if hasattr(dl, 'vocab') and dl.vocab is not None:
-        y_list = [dl.vocab[o] for o in y_list]
-        preds_list = [dl.vocab[o] for o in preds_list]
-
-    # Combine images and true labels
-    samples = L(zip(x_bio, y_list))
-
-    # Create grid of axes if not provided
-    if ctxs is None:
-        ctxs = get_grid(min(len(samples), max_n), nrows=nrows, ncols=ncols, 
-                        figsize=figsize, title="Target / Prediction")
-
-    # Display images and overlay text for GT vs Pred
-    for i, ((img, true_label), pred_label) in enumerate(zip(samples, preds_list)):
-        if i >= max_n: break
-        ax = ctxs[i]
-        img.show(ctx=ax, **kwargs)
-        color = 'green' if true_label == pred_label else 'red'
-        ax.set_title(f"{true_label} / {pred_label}", color=color, fontsize=10)
-
-    return ctxs
 
 # %% ../../nbs/023_data.tfms.ipynb #8d7f5f52
 def _save_csv(df: pd.DataFrame, path: str) -> None:

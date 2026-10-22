@@ -486,7 +486,10 @@ class BioLabel(BioDataClass):
     def from_source(cls, x, **kwargs):
         """Load a label from a raw source using the configured encoder."""
         cat = cls.get_label(**kwargs)
-        return cat(x)
+        label = cls(cat(x), meta={"vocab": list(cat.vocab), "decoded": x})
+        label.meta.pop("affine", None)
+        label.meta.pop("space", None)
+        return label
 
     @classmethod
     def from_dict(
@@ -496,8 +499,12 @@ class BioLabel(BioDataClass):
         **kwargs,
     ):
         """Load categorical labels from one or more keys in a dictionary."""
-        cat = cls.get_dict_label(keys=keys, **kwargs)
-        return cat(x)
+        keys = cls._keys if keys is None else keys
+        keys = [keys] if isinstance(keys, str) else keys
+        out = x.copy()
+        for key in keys:
+            out[key] = cls.from_source(x[key], **kwargs)
+        return out
 
     # --------------------------------------------------
     # ENCODING
@@ -528,7 +535,7 @@ class BioLabel(BioDataClass):
     # --------------------------------------------------
 
     @classmethod
-    def get_label(cls, **kwargs) -> Callable:
+    def get_label(cls, **kwargs) -> BioCategorize:
         """Return a label encoder configured from class or runtime options."""
         return cls._get_encoder(
             vocab=kwargs.get("vocab", cls._vocab),
@@ -544,7 +551,8 @@ class BioLabel(BioDataClass):
     @classmethod
     def get_dict_label(cls, **kwargs) -> Callable:
         """Return a loader that encodes selected categorical fields in a dict."""
-        keys = kwargs.get("keys", cls._keys)
+        keys = kwargs.get("keys")
+        keys = cls._keys if keys is None else keys
 
         if isinstance(keys, str):
             keys = [keys]
@@ -575,6 +583,17 @@ class BioLabel(BioDataClass):
 
         return _load_dict
 
+    # --------------------------------------------------
+    # Properties
+    # --------------------------------------------------
+    @property
+    def vocab(self):
+        return self.meta.get("vocab", self._vocab)
+
+    @property
+    def decoded(self):
+        return self.meta.get("decoded")
+
 # %% ../../nbs/021_data.core.ipynb #5ced56e8
 class BioOneHot(BioLabel):
 
@@ -602,6 +621,7 @@ class BioOneHot(BioLabel):
             one_hot=True,
             backend=backend,
         )
+
 
 # %% ../../nbs/021_data.core.ipynb #37ca5928
 class BioLabelMulti(BioLabel):

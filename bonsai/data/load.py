@@ -25,7 +25,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import re
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 
 # for pipeline context
 from dataclasses import dataclass, field
@@ -391,9 +391,6 @@ def _patch_dataloader(dl):
         dl.y_keys = dl.dataset.y_keys
 
     return dl
-
-# %% ../../nbs/022_data.load.ipynb #e15596b9
-# import copy
 
 # %% ../../nbs/022_data.load.ipynb #c8282ea1
 def _show_summary(
