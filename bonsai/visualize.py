@@ -1454,7 +1454,7 @@ def plot_stats(
             bins=30,
             density=True,
             color=hist_color,
-            edgecolor=colors[6],
+            edgecolor= 'white', # colors[6],
             alpha=0.5
         )
 

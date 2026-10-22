@@ -12,7 +12,7 @@ from __future__ import annotations
 import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Mapping, Optional, Type
+from typing import TYPE_CHECKING, Any, Callable, Dict, Mapping, Optional, Type
 from pathlib import Path
 
 # =================================
@@ -82,6 +82,7 @@ from fastcore.script import risinstance
 # bonsai
 # =================================
 from .backend import get_backend
+from .optimizers import Adam
 from .utils import *
 from .callbacks import CSVLogger, MeanLossGraphCallback
 from .visualize import teal_cmap
@@ -564,6 +565,67 @@ def _native_config(self) -> Dict[str, Any]:
 
     return values
 
+# %% ../nbs/080_engines.ipynb #7f93ccc599b00993
+def _translate_config(
+        self,
+        target=None,
+        *,
+        drop_none: bool = True,
+) -> Dict[str, Any]:
+    """
+    Translate the trainer configuration to arguments accepted by the
+    native trainer.
+
+    Parameters
+    ----------
+    target
+        Native trainer callable or class that will receive the arguments.
+        If omitted, ``trainer_cls`` is used.
+    drop_none
+        If ``True``, arguments whose value is ``None`` are omitted.
+
+    Returns
+    -------
+    dict
+        Keyword arguments compatible with the native trainer.
+
+    Notes
+    -----
+    The backend-specific :meth:`_native_config` method maps the canonical
+    trainer configuration to native argument names. The resulting arguments
+    are then filtered against the native trainer signature. Arguments supplied
+    through ``backend_kwargs`` are included as framework-specific overrides.
+    """
+    target = target or self.trainer_cls
+
+    values = self._native_config()
+
+    if drop_none:
+        values = {
+            name: value
+            for name, value in values.items()
+            if value is not None
+        }
+
+    try:
+        signature = inspect.signature(target)
+    except (TypeError, ValueError):
+        return values
+
+    if any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+    ):
+        return values
+
+    allowed = set(signature.parameters)
+
+    return {
+        name: value
+        for name, value in values.items()
+        if name in allowed
+    }
+
 # %% ../nbs/080_engines.ipynb #a0178a22a0a8e5f8
 def _get_trainer(self):
     """
@@ -647,6 +709,10 @@ class TrainerBackend:
         self.config = config
         self.evaluator = None
         self.trainer = self._build_trainer()
+
+    def show_results(self, dl=None, max_n=9, **kwargs):
+        """Display predictions using the native trainer's visualization."""
+        return self.trainer.show_results(dl=dl, max_n=max_n, **kwargs)
 
     @property
     def recorder(self):
@@ -1068,23 +1134,14 @@ class BioTrainer:
         """
         return self.backend.fit()
 
-    def evaluate(self, *args, **kwargs):
-        """
-        Run validation independently of training.
-
-        Parameters
-        ----------
-        *args
-            Positional arguments passed to the backend's evaluate method.
-        **kwargs
-            Keyword arguments passed to the backend's evaluate method.
-
-        Returns
-        -------
-        Any
-            Backend-specific validation result.
-        """
-        return self.backend.evaluate(*args, **kwargs)
+    if TYPE_CHECKING:
+        # PyCharm needs a static target for MONAI hover documentation.
+        from bonsai.engines import _monai_evaluate as evaluate
+    else:
+        @property
+        def evaluate(self):
+            """Return the backend's bound evaluation method and its signature."""
+            return self.backend.evaluate
 
     def predict(self, *args, **kwargs):
         """
@@ -1103,6 +1160,16 @@ class BioTrainer:
             Backend-specific prediction result.
         """
         return self.backend.predict(*args, **kwargs)
+
+    def show_results(self, dl=None, max_n=9, **kwargs):
+        """Display inputs, targets, and decoded predictions from one batch.
+
+        Uses the validation loader unless `dl` is supplied. `max_n` limits
+        the number of displayed samples; `kwargs` are plotting options.
+        MONAI uses its configured evaluator; fastai uses the native learner.
+        Returns the backend's visualization result.
+        """
+        return self.backend.show_results(dl=dl, max_n=max_n, **kwargs)
 
     @property
     def trainer_instance(self):
@@ -1307,7 +1374,7 @@ def _display_evaluation_statistics(result):
         data = data[np.isfinite(data)]
         if not data.size:
             warnings.warn(
-                f"No finite values to visualize for {name!r}.",
+                f"No finite values to show_stats for {name!r}.",
                 stacklevel=2,
             )
             continue
@@ -1498,6 +1565,117 @@ def _classification_report(output, vocab=None, threshold=0.5, **plot_kwargs):
         "report": report,
     }
 
+# %% ../nbs/080_engines.ipynb #8a40d41c83db4ed7
+from contextlib import contextmanager
+
+
+def _report_table(pdf, frame, title):
+    """Write a displayed pandas table to paginated PDF pages."""
+    from matplotlib.figure import Figure
+    from textwrap import fill
+
+    if not isinstance(frame.index, pd.RangeIndex) or frame.index.name is not None:
+        frame = frame.reset_index()
+    for start in range(0, max(1, len(frame)), 25):
+        page = frame.iloc[start:start + 25]
+        fig = Figure(figsize=(11.7, 8.3))
+        ax = fig.subplots()
+        ax.axis("off")
+        ax.set_title(str(title), loc="left", color="teal", pad=20)
+        if page.empty:
+            ax.text(0, 0.9, "No rows", transform=ax.transAxes)
+        else:
+            rows = [
+                [fill(f"{value:.4g}" if isinstance(value, (float, np.floating))
+                      else str(value), width=32) for value in row]
+                for row in page.itertuples(index=False, name=None)
+            ]
+            table = ax.table(cellText=rows, colLabels=[str(c) for c in page.columns],
+                             cellLoc="left", loc="upper center")
+            table.auto_set_font_size(False)
+            table.set_fontsize(9)
+            table.scale(1, 2)
+            for col in range(len(page.columns)):
+                table[0, col].set_facecolor("#d9eeee")
+        pdf.savefig(fig, bbox_inches="tight")
+        fig.clear()
+
+
+@contextmanager
+def _evaluation_report(save_report):
+    """Capture evaluation figures and pandas tables while displaying them."""
+    if save_report is None:
+        yield
+        return
+
+    from tempfile import NamedTemporaryFile
+    from unittest.mock import patch
+    from matplotlib.backends.backend_pdf import PdfPages
+    from matplotlib.figure import Figure
+    from pandas.io.formats.style import Styler
+    import IPython.display as ipy_display
+    import bonsai.visualize as visualizations
+
+    path = Path(save_report)
+    if path.suffix.lower() != ".pdf":
+        raise ValueError("save_report must be a path ending in .pdf.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    seen = {plt.figure(number) for number in plt.get_fignums()}
+    original_show, original_display = plt.show, ipy_display.display
+    with NamedTemporaryFile(dir=path.parent, suffix=".pdf", delete=False) as tmp:
+        temporary = Path(tmp.name)
+    try:
+        with PdfPages(temporary) as pdf:
+            def save_figures():
+                for number in plt.get_fignums():
+                    fig = plt.figure(number)
+                    if fig not in seen:
+                        pdf.savefig(fig, bbox_inches="tight")
+                        seen.add(fig)
+
+            def show(*args, **kwargs):
+                save_figures()
+                return original_show(*args, **kwargs)
+
+            def display(*objects, **kwargs):
+                save_figures()
+                for obj in objects:
+                    if isinstance(obj, Styler):
+                        _report_table(pdf, obj.data, obj.caption or "Evaluation table")
+                    elif isinstance(obj, pd.DataFrame):
+                        _report_table(pdf, obj, obj.index.name or "Evaluation statistics")
+                return original_display(*objects, **kwargs)
+
+            with patch.object(plt, "show", show), patch.object(ipy_display, "display", display), \
+                    patch.object(visualizations, "display", display):
+                yield
+                save_figures()
+            if pdf.get_pagecount() == 0:
+                fig = Figure(figsize=(8.3, 11.7))
+                fig.text(0.1, 0.9, "No evaluation visual output was selected.")
+                pdf.savefig(fig)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+# %% ../nbs/080_engines.ipynb #217bec59855f3b23
+def _display_evaluation_outputs(
+        result, preview, show_stats, classification_report, save_report,
+        report_data=None, **report_kwargs,
+):
+    """Share report capture, statistics, and classification displays."""
+    with _evaluation_report(save_report):
+        if preview is not None:
+            preview()
+        if show_stats:
+            _display_evaluation_statistics(result)
+        if classification_report:
+            result["classification_report"] = _classification_report(
+                result if report_data is None else report_data, **report_kwargs,
+            )
+
+
 # %% ../nbs/080_engines.ipynb #21cb6664e58b48e4
 def _fastai_evaluate(
         self,
@@ -1513,12 +1691,15 @@ def _fastai_evaluate(
         *,
         with_metrics: bool = False,
         metrics=None,
-        visualize: bool = True,
+        show_stats: bool = True,
+        show_results: bool = True,
         classification_report: bool = False,
         save_preds=None,
         save_targs=None,
+        save_report=None,
         with_preds: bool = True,
         with_targs: bool = True,
+        max_n=9,
         cmap=teal_cmap,
         pickle_protocol: int = 2,
 ) -> dict:
@@ -1553,6 +1734,12 @@ def _fastai_evaluate(
         Path to save predictions.
     save_targs : Path, optional
         Path to save targets.
+    save_report : path-like, optional
+        Save the selected plots and tables as a multipage PDF. Requires
+        a .pdf filename. Includes only output enabled by show_results,
+        show_stats, and classification_report; notebook display is retained.
+        Parent directories are created. An existing report is replaced
+        only after all visual output has been saved successfully.
     with_preds : bool, default=True
         Whether to return predictions.
     with_targs : bool, default=True
@@ -1565,11 +1752,18 @@ def _fastai_evaluate(
         Metrics to compute when with_metrics is True. Defaults to metrics
         attached to the evaluator (the Learner for fastai). A mapping supplies
         explicit metric names. An empty collection disables all metrics.
-    visualize : bool, default=True
+    show_stats : bool, default=True
         Show one plot_stats plot and one display_statistics_table table for
         each collected loss and metric (enabled by with_loss/with_metrics).
         Non-finite values are excluded from displays only; empty distributions
         are skipped with a warning. KDE is disabled for constant values.
+    show_results : bool, default=True
+        Call the backend's show_results(max_n=max_n) after evaluation.
+        This performs a separate display pass; dl and split are not
+        forwarded, and collected inputs or predictions are not reused.
+    max_n : int, default=9
+        Maximum samples in the separate show_results display. Does not
+        limit evaluation or the number of returned samples.
     classification_report : bool, default=False
         Show a confusion matrix, most-confused classes, and sklearn
         classification report. Adds computed diagnostics under
@@ -1669,12 +1863,11 @@ def _fastai_evaluate(
             result["decoded"] = next(values)
     if with_loss:
         result["losses"] = next(values)
-    if visualize:
-        _display_evaluation_statistics(result)
-    if classification_report:
-        result["classification_report"] = _classification_report(
-            dict(result, preds=preds, targs=targs, cmap=cmap)
-        )
+    _display_evaluation_outputs(
+        result, (lambda: self.show_results(max_n=max_n)) if show_results else None,
+        show_stats, classification_report, save_report,
+        report_data=dict(result, preds=preds, targs=targs, cmap=cmap),
+    )
     return result
 
 # %% ../nbs/080_engines.ipynb #c6759659b9f96f5
@@ -2069,6 +2262,17 @@ def _monai_eval_items(value):
     return list(value)
 
 
+def _monai_decode_prediction(prediction, loss_fn):
+    """Decode one prediction using the loss, including native torch classification losses."""
+    decode = getattr(loss_fn, "decodes", None)
+    if callable(decode):
+        return decode(prediction.unsqueeze(0))[0]
+    if (isinstance(loss_fn, (torch.nn.CrossEntropyLoss, torch.nn.NLLLoss))
+            and prediction.ndim and prediction.is_floating_point()):
+        return prediction.argmax(0)
+    return prediction
+
+
 def _monai_eval_dataloader(self, dl, split):
     """Resolve the evaluation dataloader from an explicit loader or split."""
     if dl is not None:
@@ -2097,10 +2301,8 @@ def _monai_evaluator_metrics(evaluator):
                 result[name] = metric
     return result
 
-
 # %% ../nbs/080_engines.ipynb #f5655a4731baf170
 # TODO:
-#  - ad show_results
 #  - support segmentation task
 
 def _monai_evaluate(
@@ -2119,96 +2321,143 @@ def _monai_evaluate(
         act=None,
         with_metrics: bool = False,
         metrics=None,
-        visualize: bool = True,
+        show_stats: bool = True,
+        show_results: bool = True,
         classification_report: bool = False,
         save_preds=None,
         save_targs=None,
+        save_report=None,
+        max_n=9,
         cmap=teal_cmap,
         threshold=0.5,
         vocab=None,
         pickle_protocol: int = 2,
 ) -> dict:
     """
-    Evaluate a MONAI model and collect detached, CPU per-sample results.
+    Evaluate the configured MONAI model and collect CPU results.
 
     Parameters
     ----------
     max_batches : int, optional
-        Maximum number of batches to evaluate. Must be a positive integer.
+        Positive maximum number of batches to evaluate. If None, evaluate
+        the complete selected dataloader.
     pred_key : str, default="pred"
-        Prediction key in the evaluator output.
+        Evaluator output key for predictions, used when output_transform
+        is not supplied.
     label_key : str, default="label"
-        Target key in the evaluator output.
+        Evaluator output key for targets, used when output_transform
+        is not supplied.
     output_transform : callable, optional
-        Extract ``(predictions, targets)`` from the evaluator output.
-        Defaults to extracting ``pred_key`` and ``label_key`` using
-        MONAI's ``from_engine`` helper.
+        Extract (predictions, targets) from evaluator output. Defaults to
+        MONAI's from_engine helper using pred_key and label_key.
     postprocessing : callable, optional
-        Transform the extracted ``(predictions, targets)`` pair before
-        storing the results. Must preserve the number of samples.
+        Additional transform of the extracted (predictions, targets)
+        pair. Must preserve sample counts and input-target correspondence.
     dl : DataLoader, optional
-        Dataloader to evaluate. Overrides ``split`` when provided.
+        Dataloader to evaluate. Overrides split.
     split : int or str, default="val"
-        Dataset split to evaluate: ``0`` or ``"train"`` for training,
-        and ``1`` or ``"val"`` for validation. Ignored when ``dl``
-        is provided.
+        Select 0 or "train" for training, or 1 or "val" for validation.
+        Ignored when dl is provided.
     with_input : bool, default=False
-        Whether to include the input samples in the results.
+        Include input samples from the evaluator's "image" output field.
     with_decoded : bool, default=False
-        Whether to include decoded predictions in the results.
+        Include predictions decoded by the configured loss's decodes
+        method. Native PyTorch cross-entropy and NLL losses use argmax;
+        other losses without a decoder retain activated predictions.
     with_loss : bool, default=False
-        Whether to compute and include per-sample losses.
+        Compute one loss per sample using the configured loss function.
+        Average any remaining loss dimensions to obtain a scalar.
     act : callable, optional
-        Activation applied to predictions before storing them.
-        Defaults to the loss function's ``activation`` method, if any.
-    save_preds : path-like, optional
-        Destination for saving the prediction list using ``torch.save``.
-    save_targs : path-like, optional
-        Destination for saving the target list using ``torch.save``.
+        Activation applied before storing predictions and decoding them.
+        Defaults to the configured loss's activation method, or identity
+        when neither is provided.
     with_metrics : bool, default=False
-        Compute each metric once per batch. Metrics named Loss (case-insensitive)
-        are skipped; use with_loss for per-sample losses.
+        Compute each selected metric once per batch. Metrics named "Loss"
+        (case-insensitive) are excluded; use with_loss for sample losses.
     metrics : callable, sequence, or mapping, optional
-        Metrics to compute when with_metrics is True. Defaults to metrics
-        attached to the evaluator. A mapping supplies
-        explicit metric names. An empty collection disables all metrics.
-    visualize : bool, default=True
-        Show one plot_stats plot and one display_statistics_table table for
-        each collected loss and metric (enabled by with_loss/with_metrics).
-        Non-finite values are excluded from displays only; empty distributions
-        are skipped with a warning. KDE is disabled for constant values.
+        Metrics collected when with_metrics=True. Defaults to metrics
+        attached to the evaluator. A mapping supplies explicit names;
+        an empty collection disables additional metric collection.
+    show_stats : bool, default=True
+        Display a distribution plot and statistics table for each
+        collected loss and metric. Non-finite values are excluded from
+        displays only. Empty distributions warn and are skipped; constant
+        distributions are shown without KDE.
+    show_results : bool, default=True
+        Display collected targets alongside decoded predictions. Reuse
+        returned decoded values when available; otherwise decode collected
+        predictions for the preview only. Inputs are retained for the
+        first max_n evaluated samples even when with_input=False. Uses
+        the validation set by default and honors an explicit dl or split;
+        no additional inference pass is performed.
     classification_report : bool, default=False
-        Show a confusion matrix, most-confused classes, and sklearn
-        classification report. Adds computed diagnostics under
-        result["classification_report"]. Supports single-label classification;
-        use act to convert binary logits to probabilities.
+        Display a confusion matrix, most-confused classes, and a
+        classification report. Include the computed diagnostics in the
+        returned dictionary. Supports single-label classification only.
+    save_preds : path-like, optional
+        Save the activated prediction list using torch.save.
+    save_targs : path-like, optional
+        Save the postprocessed target list using torch.save.
+    save_report : path-like, optional
+        Save the selected plots and tables as a multipage PDF. Requires
+        a .pdf filename. Includes only output enabled by show_results,
+        show_stats, and classification_report; notebook display is retained.
+        Parent directories are created. An existing report is replaced
+        only after all visual output has been saved successfully.
+    max_n : int, default=9
+        Maximum evaluated samples shown by show_results. Does not
+        limit evaluation or the number of returned samples.
+    cmap : colormap, default=teal_cmap
+        Colormap for the classification report's confusion matrix.
+    threshold : float, default=0.5
+        Classification-report threshold for binary floating-point
+        predictions when decoded predictions are unavailable. Use act
+        to convert logits to probabilities, or threshold=0 for logits.
+    vocab : sequence, optional
+        Ordered class names for the result preview and classification report.
+        The preview defaults to dl.vocab; the classification report defaults
+        to numeric class IDs. Must cover every observed class.
+    pickle_protocol : int, default=2
+        Serialization option used for save_preds and save_targs. Its
+        negated value is passed to torch.save as pickle_protocol.
 
     Returns
     -------
     dict
-        With with_metrics=True, also contains "metrics": a mapping from metric
-        names to lists of per-batch values. Metrics such as ROC AUC receive
-        the full batch; batches missing required classes can still yield NaN.
-        A dictionary containing ``preds`` and ``targs``, with optional
-        ``inputs``, ``decoded``, and ``losses`` lists. Each list contains
-        one entry per sample, in evaluation order.
+        "preds" and "targs" are lists of detached CPU tensors, one per
+        sample in evaluation order. Optional lists "inputs", "decoded",
+        and "losses" follow the same sample order. With with_metrics=True,
+        "metrics" maps metric names to lists of per-batch results.
+        With classification_report=True, "classification_report" contains
+        the computed classification diagnostics.
+
+    Raises
+    ------
+    TypeError
+        If max_batches is neither an integer nor None, including bool.
+    ValueError
+        If max_batches is not positive, split is invalid, with_loss=True
+        has no callable loss, or predictions, targets, and inputs have
+        incompatible sample counts. Postprocessing must preserve counts.
+    RuntimeError
+        If no evaluator is configured or no predictions are collected.
 
     Notes
     -----
-    Evaluator-level postprocessing has already been applied before this
-    method collects outputs. The ``postprocessing`` argument here is an
-    additional transformation applied to extracted predictions and targets.
+    Evaluator-level postprocessing runs before output extraction. Losses
+    and metrics use extracted predictions and targets before this method's
+    additional postprocessing and activation. Metrics receive complete
+    batches; metrics such as ROC AUC can return NaN for batches missing
+    required classes.
 
-    Per-sample losses are computed from the extracted predictions and
-    targets before this method's postprocessing and activation. Spatial
-    loss dimensions are averaged to produce one scalar per sample.
+    Activation and decoding receive one sample with a leading batch
+    dimension. Missing loss activation is an identity. Native PyTorch
+    cross-entropy and NLL predictions decode to class IDs using argmax;
+    other losses without a decoder retain their activated predictions.
 
-    Activation and decoding are applied with a leading batch dimension.
-    If the loss function does not define ``activation`` or ``decodes``,
-    the corresponding operation is an identity.
-
-    The evaluator's dataloader and epoch length, along with the temporary
-    event handler, are restored even if evaluation raises an exception.
+    The evaluator's dataloader and epoch length and the temporary output
+    collection handler are restored even if evaluation fails. Evaluation
+    still updates the evaluator's other state and attached handlers.
     """
 
     from ignite.engine import Events
@@ -2232,7 +2481,6 @@ def _monai_evaluate(
         raise ValueError("with_loss requires a configured loss function.")
 
     activation = act if act is not None else getattr(loss_fn, "activation", None)
-    decode = getattr(loss_fn, "decodes", None)
     transform = (
         output_transform
         if output_transform is not None
@@ -2240,6 +2488,8 @@ def _monai_evaluate(
     )
 
     result = {"preds": [], "targs": []}
+    display_inputs = []
+    display_preds = []
     if with_input:
         result["inputs"] = []
     if with_decoded:
@@ -2271,6 +2521,12 @@ def _monai_evaluate(
             raise ValueError(
                 "Predictions and targets have different sample counts."
             )
+
+        # MONAI decollation can turn scalar tensor labels into Python scalars.
+        raw_labels = [
+            y if isinstance(y, torch.Tensor) else torch.as_tensor(y, device=p.device)
+            for p, y in zip(raw_preds, raw_labels)
+        ]
 
         # Compute per-sample losses before postprocessing and activation.
         if with_loss:
@@ -2304,7 +2560,7 @@ def _monai_evaluate(
             )
 
         # MONAI decollated output is typically a list of sample dictionaries.
-        if with_input:
+        if with_input or show_results:
             images = (
                 output["image"]
                 if isinstance(output, dict)
@@ -2329,16 +2585,19 @@ def _monai_evaluate(
                 result["preds"].append(_monai_eval_tensor(p_activated))
                 result["targs"].append(_monai_eval_tensor(y))
 
-                if with_input:
-                    result["inputs"].append(_monai_eval_tensor(inputs[i]))
+                if with_input or (show_results and len(display_inputs) < max_n):
+                    image = _monai_eval_tensor(inputs[i])
+                    if with_input:
+                        result["inputs"].append(image)
+                    if show_results and len(display_inputs) < max_n:
+                        display_inputs.append(image)
 
-                if with_decoded:
-                    decoded = (
-                        decode(p_activated.unsqueeze(0))[0]
-                        if decode is not None
-                        else p_activated
-                    )
-                    result["decoded"].append(_monai_eval_tensor(decoded))
+                if with_decoded or (show_results and len(display_preds) < max_n):
+                    decoded = _monai_eval_tensor(_monai_decode_prediction(p_activated, loss_fn))
+                    if with_decoded:
+                        result["decoded"].append(decoded)
+                    if show_results and len(display_preds) < max_n:
+                        display_preds.append(decoded)
 
                 if with_loss:
                     result["losses"].append(losses[i])
@@ -2384,12 +2643,21 @@ def _monai_evaluate(
     if save_targs is not None:
         torch.save(result["targs"], Path(save_targs), pickle_protocol=-pickle_protocol)
 
-    if visualize:
-        _display_evaluation_statistics(result)
+    preview = None
+    if show_results:
+        from bonsai.data.tfms import show_results as display_results
 
-    if classification_report:
-        result["classification_report"] = _classification_report(result, vocab=vocab, threshold=threshold, cmap=cmap)
+        def preview():
+            return display_results(
+                dl, (display_inputs, result["targs"]),
+                result.get("decoded", display_preds), max_n=max_n,
+                vocab=vocab if vocab is not None else getattr(dl, "vocab", None),
+            )
 
+    _display_evaluation_outputs(
+        result, preview, show_stats, classification_report, save_report,
+        vocab=vocab, threshold=threshold, cmap=cmap,
+    )
     return result
 
 # %% ../nbs/080_engines.ipynb #31c2a8cc9ec0aece
@@ -2510,6 +2778,24 @@ MonaiTrainerBackend._attach_validation = _monai_attach_validation
 MonaiTrainerBackend._attach_logger = _monai_attach_logger
 MonaiTrainerBackend.evaluate = _monai_evaluate
 # MonaiTrainerBackend.predict = _monai_predict
+
+# %% ../nbs/080_engines.ipynb #911dbb51d8ffb9a1
+def _monai_show_results(self, dl=None, max_n=9, **kwargs):
+    """Display one batch collected by the configured MONAI evaluator."""
+    from bonsai.data.tfms import show_results
+
+    if max_n <= 0:
+        return []
+    dl = _monai_eval_dataloader(self, dl, "val")
+    result = self.evaluate(
+        dl=dl, max_batches=1, with_input=True, with_decoded=True, show_stats=False, show_results=False,
+    )
+    return show_results(
+        dl, (result["inputs"], result["targs"]), result["decoded"],
+        max_n=max_n, **kwargs,
+    )
+
+MonaiTrainerBackend.show_results = _monai_show_results
 
 # %% ../nbs/080_engines.ipynb #176cd773e19934d3
 def _monai_trainer(

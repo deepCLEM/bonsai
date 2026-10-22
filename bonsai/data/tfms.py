@@ -320,6 +320,10 @@ def _label_value(label, vocab=None):
         return decoded
     if isinstance(label, (np.ndarray, torchTensor, np.generic)):
         label = label.tolist()
+        if (vocab is not None and isinstance(label, list) and len(label) == len(vocab)
+                and all(value in (0, 1) for value in label)):
+            labels = [vocab[i] for i, value in enumerate(label) if value]
+            return labels[0] if len(labels) == 1 else labels
     return vocab[label] if vocab is not None and isinstance(label, (int, np.integer)) else label
 
 
@@ -337,7 +341,7 @@ def show_batch(x: BioImageBase,      # The input image data.
                ):
     """
     Display a batch of images with their corresponding labels as titles.
-    
+
     Returns:
         List[Context]: A list of contexts after displaying the images and their labels.
     """
@@ -347,7 +351,6 @@ def show_batch(x: BioImageBase,      # The input image data.
         img.show(ctx=ax, **kwargs)
         ax.set_title(f"Label: {decoded}")
     return ctxs
-
 
 # %% ../../nbs/023_data.tfms.ipynb #55a7370c
 def _to_bioimage(x):
@@ -438,7 +441,7 @@ def show_results(x: BioImageBase, y, samples, outs, ctxs=None, max_n=10,
                 pred = pred[0]
         pred = _label_value(pred, label_vocab)
         matches = set(target) == set(pred) if isinstance(label, (BioLabelMulti, BioOneHotMulti)) else np.array_equal(target, pred)
-        ax.set_title(f"{target} / {pred}", color='green' if matches else 'red')
+        ax.set_title(f"target: {target} \n pred: {pred}", color='green' if matches else 'red')
     return ctxs
 
 

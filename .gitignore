@@ -158,3 +158,5 @@ checklink/cookies.txt
 # Quarto
 .quarto
 meta/
+/.aiassistant/
+/AGENTS.md
