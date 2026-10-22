@@ -53,6 +53,8 @@ import fastai.losses as fl
 # =================================
 from .backend import get_backend
 from .utils import *
+from functools import partial
+
 
 # %% ../nbs/040_losses.ipynb #f6eae6b4
 LOSS_BACKENDS = {}
@@ -101,7 +103,7 @@ class BioLoss:
         Converts raw model outputs into the prediction space associated
         with the loss. Defaults to ``noops``.
     decodes : callable
-        Converts predictions into their decoded representation.
+        Converts activated predictions into their decoded target representation.
         Defaults to ``noops``.
 
     Notes
@@ -129,16 +131,17 @@ class BioLoss:
         backend_loss = getattr(cls, f"_{backend}", None)
 
         if backend_loss is not None:
-            return backend_loss(*args, **kwargs)
+            loss = backend_loss(*args, **kwargs)
+        else:
+            loss = cls._get_backend_loss(backend).create(cls, *args, **kwargs)
 
-        # Otherwise let the backend adapter wrap/adapt the default loss.
-        backend_cls = cls._get_backend_loss(backend)
-
-        return backend_cls.create(
-            cls,
-            *args,
-            **kwargs,
-        )
+        for name in ("activation", "decodes"):
+            native = getattr(loss, name, noops)
+            # Keep backend-native methods (including fastai's configured axis).
+            if getattr(native, "__func__", native) is noops:
+                method = getattr(cls, name)
+                setattr(loss, name, partial(method, loss))
+        return loss
 
     @classmethod
     def _get_backend_loss(cls, backend):
@@ -152,6 +155,76 @@ class BioLoss:
                 f"Loss backend '{backend}' is not registered. "
                 f"Available loss backends: {list(LOSS_BACKENDS)}"
             ) from None
+
+# %% ../nbs/040_losses.ipynb #f1b26afde65ac61
+def _class_activation(self, x):
+    return x.softmax(dim=getattr(self, "axis", 1) if x.ndim > 1 else 0)
+
+
+def _class_decodes(self, x):
+    return x.argmax(dim=getattr(self, "axis", 1) if x.ndim > 1 else 0)
+
+
+def _binary_activation(self, x):
+    return x.sigmoid()
+
+
+def _binary_decodes(self, x, thresh=0.5):
+    """Threshold activated probabilities, preserving independent channels."""
+    return x > thresh
+
+
+def _exp_activation(self, x):
+    return x.exp()
+
+
+def _segmentation_config(self):
+    loss = getattr(self, "func", self)
+    return getattr(loss, "dice", getattr(loss, "generalized_dice", loss))
+
+
+def _segmentation_activation(self, x):
+    loss = _segmentation_config(self)
+    if getattr(loss, "sigmoid", False):
+        return x.sigmoid()
+    if getattr(loss, "softmax", False) and x.shape[1] > 1:
+        return x.softmax(dim=1)
+    if getattr(loss, "other_act", None) is not None:
+        return loss.other_act(x)
+    # Combined focal/CE losses still consume logits when Dice has no activation.
+    if hasattr(getattr(self, "func", self), "cross_entropy"):
+        return x.softmax(dim=1) if x.shape[1] > 1 else x.sigmoid()
+    if hasattr(getattr(self, "func", self), "focal"):
+        return x.sigmoid()
+    return x
+
+
+def _segmentation_decodes(self, x):
+    loss = _segmentation_config(self)
+    native = getattr(self, "func", self)
+    to_onehot_y = getattr(native, "to_onehot_y", getattr(loss, "to_onehot_y", False))
+    categorical = (getattr(loss, "softmax", False) or getattr(loss, "use_softmax", False)
+                   or to_onehot_y)
+    if hasattr(getattr(self, "func", self), "cross_entropy"):
+        categorical = x.shape[1] > 1
+    if categorical and x.shape[1] > 1:
+        indices = x.argmax(dim=1, keepdim=True)
+        if to_onehot_y:
+            return indices
+        return torch.zeros_like(x).scatter_(1, indices, 1)
+    return x > 0.5
+
+
+def _focal_activation(self, x):
+    if isinstance(self, fl.FocalLoss) or getattr(self, "use_softmax", False):
+        return _class_activation(self, x)
+    return x.sigmoid()
+
+
+def _focal_decodes(self, x):
+    if isinstance(self, fl.FocalLoss):
+        return _class_decodes(self, x)
+    return _segmentation_decodes(self, x)
 
 # %% ../nbs/040_losses.ipynb #2ab781ca
 class LossBackend:
@@ -258,9 +331,6 @@ class FastaiLossBackend(LossBackend):
             is_2d=loss_cls.is_2d,
             **kwargs,
         )
-
-        loss.activation = loss_cls.activation
-        loss.decodes = loss_cls.decodes
 
         return loss
 
@@ -833,6 +903,11 @@ class PoissonNLLLoss(BioLoss):
     _default = nn.PoissonNLLLoss
     _torch = nn.PoissonNLLLoss
 
+    def activation(self, x):
+        loss = getattr(self, "func", self)
+        return x.exp() if loss.log_input else x
+
+
 # %% ../nbs/040_losses.ipynb #1692acd4
 def radial_mask(r, cx, cy, sx, sy, delta=1):
     """
@@ -1330,6 +1405,9 @@ class KLDivLoss(BioLoss):
     """
     _default = nn.KLDivLoss
     _torch = nn.KLDivLoss
+
+    activation = _exp_activation
+
 
 # %% ../nbs/040_losses.ipynb #1ce6ddcd
 class _CombinedLoss(nn.Module):
@@ -2371,6 +2449,18 @@ class CellLoss(BioLoss):
     _default = _CellLoss
     _torch = _CellLoss
 
+    def activation(self, x):
+        result = x.clone()
+        result[:, 0] = x[:, 0].sigmoid()
+        return result
+
+    def decodes(self, x):
+        result = x.clone()
+        result[:, 0] = x[:, 0] > 0.5
+        result[:, 1:] = x[:, 1:] / 5.0
+        return result
+
+
 # %% ../nbs/040_losses.ipynb #a27373a6
 class _InstanceSegLoss(_Loss):
     """
@@ -2622,6 +2712,13 @@ class InstanceSegLoss(BioLoss):
     _default = _InstanceSegLoss
     _torch = _InstanceSegLoss
 
+    def activation(self, x):
+        loss = getattr(self, "func", self)
+        return x.sigmoid() if loss.logits else x
+
+    decodes = _binary_decodes
+
+
 # %% ../nbs/040_losses.ipynb #5aef2e01
 class _DiceBCELoss(_Loss):
     """
@@ -2840,6 +2937,10 @@ class DiceBCELoss(BioLoss):
     _default = _DiceBCELoss
     _torch = _DiceBCELoss
 
+    activation = _binary_activation
+    decodes = _binary_decodes
+
+
 # %% ../nbs/040_losses.ipynb #daf41681
 class CrossEntropyLoss(BioLoss):
     """
@@ -2934,13 +3035,9 @@ class CrossEntropyLoss(BioLoss):
     _torch = nn.CrossEntropyLoss
     _fastai = fl.CrossEntropyLossFlat
 
-    def activation(self, x: torchTensor) -> torchTensor:
-        "Apply softmax to convert logits to class probabilities."
-        return F.softmax(x, dim=-1)
+    activation = _class_activation
+    decodes = _class_decodes
 
-    def decodes(self, x: torchTensor) -> torchTensor:
-        "Convert class logits to the predicted class index."
-        return x.argmax(dim=-1)
 
 # %% ../nbs/040_losses.ipynb #423c9e91
 class NLLLoss(BioLoss):
@@ -2974,13 +3071,9 @@ class NLLLoss(BioLoss):
     _default = nn.NLLLoss
     _torch = nn.NLLLoss
 
-    def activation(self, x: torchTensor) -> torchTensor:
-        "Apply softmax to convert logits to class probabilities."
-        return F.softmax(x, dim=-1)
+    activation = _exp_activation
+    decodes = _class_decodes
 
-    def decodes(self, x: torchTensor) -> torchTensor:
-        "Convert class logits to the predicted class index."
-        return x.argmax(dim=-1)
 
 # %% ../nbs/040_losses.ipynb #8897f180
 class BCELoss(BioLoss):
@@ -3009,6 +3102,7 @@ class BCELoss(BioLoss):
     _default = nn.BCELoss
     _torch = nn.BCELoss
     _fastai = fl.BCELossFlat
+    decodes = _binary_decodes
 
 
 # %% ../nbs/040_losses.ipynb #c76325ea
@@ -3048,13 +3142,9 @@ class BCEWithLogitsLoss(BioLoss):
     _torch = nn.BCEWithLogitsLoss
     _fastai = fl.BCEWithLogitsLossFlat
 
-    def decodes(self, x:torchTensor, thresh: float = 0.5) -> torchTensor:
-        "Converts model output to target format"
-        return x>thresh
-    
-    def activation(self, x:torchTensor) -> torchTensor:
-        "`nn.BCEWithLogitsLoss`'s fused activation function applied to model output"
-        return torch.sigmoid(x)
+    activation = _binary_activation
+    decodes = _binary_decodes
+
 
 # %% ../nbs/040_losses.ipynb #9b63673f
 class MultiLabelMarginLoss(BioLoss):
@@ -3083,9 +3173,8 @@ class MultiLabelMarginLoss(BioLoss):
     _default = nn.MultiLabelMarginLoss
     _torch = nn.MultiLabelMarginLoss
 
-    def decodes(self, x: Tensor) -> Tensor:
-        "Decode class scores by selecting the highest-scoring class."
-        return x.argmax(dim=-1)
+    # Relative margins specify neither a threshold nor the number of positive labels.
+
 
 # %% ../nbs/040_losses.ipynb #b818de72
 class MultiLabelSoftMarginLoss(BioLoss):
@@ -3117,13 +3206,9 @@ class MultiLabelSoftMarginLoss(BioLoss):
     _default = nn.MultiLabelSoftMarginLoss
     _torch = nn.MultiLabelSoftMarginLoss
 
-    def activation(self, x: Tensor) -> Tensor:
-        "Apply sigmoid independently to each class."
-        return torch.sigmoid(x)
+    activation = _binary_activation
+    decodes = _binary_decodes
 
-    def decodes(self, x: Tensor) -> Tensor:
-        "Convert independent class probabilities to binary predictions."
-        return (torch.sigmoid(x) > 0.5).to(x.dtype)
 
 # %% ../nbs/040_losses.ipynb #f9437987
 class DiceLoss(BioLoss):
@@ -3164,6 +3249,9 @@ class DiceLoss(BioLoss):
     _monai = ml.DiceLoss
     _fastai = fl.DiceLoss
 
+    activation = _segmentation_activation
+    decodes = _segmentation_decodes
+
 
 # %% ../nbs/040_losses.ipynb #d5b9b26f
 class MaskedDiceLoss(BioLoss):
@@ -3201,13 +3289,9 @@ class MaskedDiceLoss(BioLoss):
     _default = ml.MaskedDiceLoss
     _monai = ml.MaskedDiceLoss
 
-    def activation(self, x:Tensor) -> Tensor: 
-        "Activation function applied to model output"
-        return F.softmax(x, dim=-1)
-    
-    def decodes(self, x:Tensor) -> Tensor:
-        "Converts model output to target format"
-        return x.argmax(dim=-1)
+    activation = _segmentation_activation
+    decodes = _segmentation_decodes
+
 
 # %% ../nbs/040_losses.ipynb #dd2f3ccb
 class GeneralizedDiceLoss(BioLoss):
@@ -3254,13 +3338,9 @@ class GeneralizedDiceLoss(BioLoss):
     _default = ml.GeneralizedDiceLoss
     _monai = ml.GeneralizedDiceLoss
 
-    def activation(self, x:Tensor) -> Tensor: 
-        "Activation function applied to model output"
-        return F.softmax(x, dim=-1)
-    
-    def decodes(self, x:Tensor) -> Tensor:
-        "Converts model output to target format"
-        return x.argmax(dim=-1)
+    activation = _segmentation_activation
+    decodes = _segmentation_decodes
+
 
 # %% ../nbs/040_losses.ipynb #2d1e6f52
 class GeneralizedWassersteinDiceLoss(BioLoss):
@@ -3303,13 +3383,9 @@ class GeneralizedWassersteinDiceLoss(BioLoss):
     _default = ml.GeneralizedWassersteinDiceLoss
     _monai = ml.GeneralizedWassersteinDiceLoss
 
-    def activation(self, x:Tensor) -> Tensor: 
-        "Activation function applied to model output"
-        return F.softmax(x, dim=-1)
-    
-    def decodes(self, x:Tensor) -> Tensor:
-        "Converts model output to target format"
-        return x.argmax(dim=-1)
+    activation = _class_activation
+    decodes = _class_decodes
+
 
 # %% ../nbs/040_losses.ipynb #da0cf482
 class DiceCELoss(BioLoss):
@@ -3350,13 +3426,9 @@ class DiceCELoss(BioLoss):
     _default = ml.DiceCELoss
     _monai = ml.DiceCELoss
 
-    def activation(self, x:Tensor) -> Tensor: 
-        "Activation function applied to model output"
-        return F.softmax(x, dim=-1)
-    
-    def decodes(self, x:Tensor) -> Tensor:
-        "Converts model output to target format"
-        return x.argmax(dim=-1)
+    activation = _segmentation_activation
+    decodes = _segmentation_decodes
+
 
 # %% ../nbs/040_losses.ipynb #620c24fc
 class DiceFocalLoss(BioLoss):
@@ -3400,13 +3472,9 @@ class DiceFocalLoss(BioLoss):
     _default = ml.DiceFocalLoss
     _monai = ml.DiceFocalLoss
 
-    def activation(self, x:Tensor) -> Tensor: 
-        "Activation function applied to model output"
-        return F.softmax(x, dim=-1)
-    
-    def decodes(self, x:Tensor) -> Tensor:
-        "Converts model output to target format"
-        return x.argmax(dim=-1)
+    activation = _segmentation_activation
+    decodes = _segmentation_decodes
+
 
 # %% ../nbs/040_losses.ipynb #38b40667
 class GeneralizedDiceFocalLoss(BioLoss):
@@ -3447,13 +3515,9 @@ class GeneralizedDiceFocalLoss(BioLoss):
     _default = ml.GeneralizedDiceFocalLoss
     _monai = ml.GeneralizedDiceFocalLoss
 
-    def activation(self, x:Tensor) -> Tensor: 
-        "Activation function applied to model output"
-        return F.softmax(x, dim=-1)
-    
-    def decodes(self, x:Tensor) -> Tensor:
-        "Converts model output to target format"
-        return x.argmax(dim=-1)
+    activation = _segmentation_activation
+    decodes = _segmentation_decodes
+
 
 # %% ../nbs/040_losses.ipynb #18ee695f
 class FocalLoss(BioLoss):
@@ -3496,6 +3560,10 @@ class FocalLoss(BioLoss):
     _default = ml.FocalLoss
     _monai = ml.FocalLoss
     _fastai = fl.FocalLoss
+
+    activation = _focal_activation
+    decodes = _focal_decodes
+
 
 # %% ../nbs/040_losses.ipynb #da54194e
 class TverskyLoss(BioLoss):
@@ -3545,13 +3613,9 @@ class TverskyLoss(BioLoss):
     _default = ml.TverskyLoss
     _monai = ml.TverskyLoss
 
-    def activation(self, x:Tensor) -> Tensor: 
-        "Activation function applied to model output"
-        return F.softmax(x, dim=-1)
-    
-    def decodes(self, x:Tensor) -> Tensor:
-        "Converts model output to target format"
-        return x.argmax(dim=-1)
+    activation = _segmentation_activation
+    decodes = _segmentation_decodes
+
 
 # %% ../nbs/040_losses.ipynb #4474c1dd
 class ContrastiveLoss(BioLoss):
@@ -3598,64 +3662,6 @@ class ContrastiveLoss(BioLoss):
     """
     _default = ml.ContrastiveLoss
     _monai = ml.ContrastiveLoss
-
-# %% ../nbs/040_losses.ipynb #af09373c
-class BCEWithLogitsLoss(BioLoss):
-    """
-    Binary Cross-Entropy loss with logits for multi-channel segmentation.
-
-    Each channel is treated as an independent binary prediction. This is
-    appropriate for multi-label or instance segmentation, where each
-    channel represents an object instance and different instances may
-    overlap.
-
-    For each element, the binary cross-entropy with logits is
-
-        L(x, y) = -[y log(σ(x)) + (1-y) log(1-σ(x))]
-
-    where:
-
-    - ``x`` is the raw model logit,
-    - ``y`` is the binary target,
-    - ``σ(x)`` is the sigmoid probability.
-
-    The sigmoid operation is incorporated directly into the loss for
-    numerical stability.
-
-    For an input with shape ``(N, K, ...)``, where ``K`` is the number
-    of instance channels, the loss is applied independently to every
-    channel and spatial location before the selected reduction.
-
-    Parameters
-    ----------
-    *args
-        Positional arguments passed to :class:`torch.nn.BCEWithLogitsLoss`.
-    **kwargs
-        Keyword arguments passed to :class:`torch.nn.BCEWithLogitsLoss`,
-        including ``weight``, ``reduction``, and ``pos_weight``.
-
-    Notes
-    -----
-    Despite the ``BCELoss`` name, this class operates on **logits**, not
-    probabilities. Do not apply ``sigmoid`` to the model output before
-    passing it to this loss.
-
-    This is a thin bonsai wrapper around
-    :class:`torch.nn.BCEWithLogitsLoss`, preserving its standard API.
-
-    Examples
-    --------
-    >>> loss = BCEWithLogitsLoss()
-    >>> pred = torch.randn(2, 3, 64, 64)
-    >>> targ = torch.randint(0, 2, (2, 3, 64, 64)).float()
-    >>> value = loss(pred, targ)
-
-    For imbalanced instance masks, positive examples can be weighted:
-
-    >>> loss = BCEWithLogitsLoss(pos_weight=torch.tensor([2.0, 2.0, 3.0]))
-    """
-    _default = nn.BCEWithLogitsLoss
-    _torch = nn.BCEWithLogitsLoss
 
 # %% ../nbs/040_losses.ipynb #36cbbbb2
 class BendingEnergyLoss(BioLoss):

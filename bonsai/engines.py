@@ -426,6 +426,46 @@ def _validate_trainer_config(config: TrainerConfig):
         "Backend",
     )
 
+# %% ../nbs/080_engines.ipynb #a0ad9586015de0e1
+def _prediction_activation(pred, loss_fn, act=None):
+    """Use the loss activation, with native torch classification fallbacks."""
+    activation = act if act is not None else getattr(loss_fn, "activation", None)
+    if callable(activation):
+        return activation(pred)
+    if isinstance(loss_fn, torch.nn.CrossEntropyLoss):
+        return pred.softmax(dim=1)
+    if isinstance(loss_fn, torch.nn.NLLLoss):
+        return pred.exp()
+    if isinstance(loss_fn, (torch.nn.BCEWithLogitsLoss, torch.nn.MultiLabelSoftMarginLoss)):
+        return pred.sigmoid()
+    return pred
+
+
+def _prediction_decode(pred, loss_fn):
+    """Decode activated batches; unknown losses retain their predictions."""
+    decode = getattr(loss_fn, "decodes", None)
+    if callable(decode):
+        return decode(pred)
+    if isinstance(loss_fn, (torch.nn.CrossEntropyLoss, torch.nn.NLLLoss)):
+        return pred.argmax(dim=1)
+    if isinstance(loss_fn, (torch.nn.BCELoss, torch.nn.BCEWithLogitsLoss,
+                            torch.nn.MultiLabelSoftMarginLoss)):
+        return pred > 0.5
+    return pred
+
+
+def _metric_prediction(metric, pred, loss_fn):
+    """Unmarked native metrics retain their own prediction preparation."""
+    decode = getattr(metric, "_decode", None)
+    if not isinstance(decode, bool):
+        return pred
+    if isinstance(pred, (list, tuple)):
+        return type(pred)(_metric_prediction(metric, p.unsqueeze(0), loss_fn)[0] for p in pred)
+    pred = _prediction_activation(pred, loss_fn)
+    return _prediction_decode(pred, loss_fn) if decode else pred
+
+
+
 # %% ../nbs/080_engines.ipynb #aef45d073a374d6
 def _monai_metric_config(metrics, val_metrics=None, loss=None):
     """
@@ -471,7 +511,9 @@ def _monai_metric_config(metrics, val_metrics=None, loss=None):
     Each metric is wrapped in an ``IgniteMetricHandler`` using the
     ``pred`` and ``label`` outputs from the engine. If ``loss`` is provided,
     a MONAI ``LossMetric`` is appended to the validation metrics to track
-    validation loss using the same engine outputs.
+    validation loss using raw engine outputs. Metrics with ``_decode`` use
+    loss activation and, when True, loss decoding; unmarked native metrics
+    receive raw outputs.
     """
 
     def metric_name(metric):
@@ -483,10 +525,13 @@ def _monai_metric_config(metrics, val_metrics=None, loss=None):
         return name() if callable(name) else name
 
     def wrap_handler(metric):
-        return IgniteMetricHandler(
-            metric_fn=metric,
-            output_transform=from_engine(["pred", "label"]),
-        )
+        def prepare(output):
+            pred, target = from_engine(["pred", "label"])(output)
+            if not isinstance(metric, LossMetric):
+                pred = _metric_prediction(metric, pred, loss)
+            return pred, target
+
+        return IgniteMetricHandler(metric_fn=metric, output_transform=prepare)
 
     def as_list(metrics):
         if metrics is None:
@@ -1316,7 +1361,7 @@ def _evaluation_metrics(metrics):
     return result
 
 
-def _evaluation_metric_value(metric, pred, target, output=None):
+def _evaluation_metric_value(metric, pred, target, output=None, loss_fn=None):
     """Evaluate a sample or batch, resetting copied metric state each time."""
     from fastai.learner import Metric as FastaiMetric
     from ignite.metrics import Metric as IgniteMetric
@@ -1335,9 +1380,15 @@ def _evaluation_metric_value(metric, pred, target, output=None):
     with torch.no_grad():
         if isinstance(metric, IgniteMetric):
             metric.reset()
-            metric.update(metric._output_transform(output if output is not None else (pred, target)))
-            value = metric.compute()
-        elif isinstance(metric, CumulativeIterationMetric):
+            prepared = metric._output_transform(output if output is not None else (pred, target))
+            if loss_fn is not None and isinstance(getattr(metric, "_decode", None), bool):
+                p, y = prepared
+                prepared = (_metric_prediction(metric, p, loss_fn), y)
+            metric.update(prepared)
+            return detach(metric.compute())
+        if loss_fn is not None:
+            pred = _metric_prediction(metric, pred, loss_fn)
+        if isinstance(metric, CumulativeIterationMetric):
             metric.reset()
             metric(pred, target)
             value = metric.aggregate()
@@ -2263,14 +2314,8 @@ def _monai_eval_items(value):
 
 
 def _monai_decode_prediction(prediction, loss_fn):
-    """Decode one prediction using the loss, including native torch classification losses."""
-    decode = getattr(loss_fn, "decodes", None)
-    if callable(decode):
-        return decode(prediction.unsqueeze(0))[0]
-    if (isinstance(loss_fn, (torch.nn.CrossEntropyLoss, torch.nn.NLLLoss))
-            and prediction.ndim and prediction.is_floating_point()):
-        return prediction.argmax(0)
-    return prediction
+    """Decode one activated sample using the shared loss strategy."""
+    return _prediction_decode(prediction.unsqueeze(0), loss_fn)[0]
 
 
 def _monai_eval_dataloader(self, dl, split):
@@ -2363,14 +2408,14 @@ def _monai_evaluate(
     with_decoded : bool, default=False
         Include predictions decoded by the configured loss's decodes
         method. Native PyTorch cross-entropy and NLL losses use argmax;
-        other losses without a decoder retain activated predictions.
+        native binary losses use thresholding; unknown losses retain predictions.
     with_loss : bool, default=False
         Compute one loss per sample using the configured loss function.
         Average any remaining loss dimensions to obtain a scalar.
     act : callable, optional
         Activation applied before storing predictions and decoding them.
-        Defaults to the configured loss's activation method, or identity
-        when neither is provided.
+        Defaults to the loss activation, native torch classification
+        activation, or identity. Metrics use the configured loss strategy.
     with_metrics : bool, default=False
         Compute each selected metric once per batch. Metrics named "Loss"
         (case-insensitive) are excluded; use with_loss for sample losses.
@@ -2445,15 +2490,16 @@ def _monai_evaluate(
     Notes
     -----
     Evaluator-level postprocessing runs before output extraction. Losses
-    and metrics use extracted predictions and targets before this method's
-    additional postprocessing and activation. Metrics receive complete
+    use extracted predictions and targets before this method's
+    additional postprocessing. Marked metrics use loss activation and optional
+    decoding; native metrics without _decode retain raw inputs. Metrics receive complete
     batches; metrics such as ROC AUC can return NaN for batches missing
     required classes.
 
     Activation and decoding receive one sample with a leading batch
-    dimension. Missing loss activation is an identity. Native PyTorch
-    cross-entropy and NLL predictions decode to class IDs using argmax;
-    other losses without a decoder retain their activated predictions.
+    dimension. Loss methods take precedence. Native PyTorch cross-entropy, NLL, and
+    binary classification losses use softmax, exp, or sigmoid as appropriate
+    and argmax or threshold decoding. Unknown losses use identity fallbacks.
 
     The evaluator's dataloader and epoch length and the temporary output
     collection handler are restored even if evaluation fails. Evaluation
@@ -2480,7 +2526,6 @@ def _monai_evaluate(
     if with_loss and not callable(loss_fn):
         raise ValueError("with_loss requires a configured loss function.")
 
-    activation = act if act is not None else getattr(loss_fn, "activation", None)
     transform = (
         output_transform
         if output_transform is not None
@@ -2544,7 +2589,7 @@ def _monai_evaluate(
             for name, metric in metric_fns.items():
                 result["metrics"][name].append(
                     _evaluation_metric_value(
-                        metric, batch_preds, batch_labels, output
+                        metric, batch_preds, batch_labels, output, loss_fn=loss_fn
                     )
                 )
 
@@ -2576,11 +2621,7 @@ def _monai_evaluate(
         with torch.no_grad():
             for i, (p, y) in enumerate(zip(pred_items, label_items)):
                 # Apply activation to each prediction independently.
-                p_activated = (
-                    activation(p.unsqueeze(0))[0]
-                    if activation is not None
-                    else p
-                )
+                p_activated = _prediction_activation(p.unsqueeze(0), loss_fn, act)[0]
 
                 result["preds"].append(_monai_eval_tensor(p_activated))
                 result["targs"].append(_monai_eval_tensor(y))

@@ -209,6 +209,10 @@ class BioMetric:
     _default : callable, optional
         Default metric implementation used when no backend-specific
         implementation is available.
+    _decode : bool, default=False
+        Whether the metric requires hard labels/masks rather than continuous
+        predictions or scores. Also exposed on the instantiated backend metric.
+        This flag describes the input contract; it does not perform decoding.
     _<backend> : callable, optional
         Backend-specific metric implementation. For example, ``_monai``
         or ``_fastai``. When defined, it takes precedence over
@@ -229,6 +233,7 @@ class BioMetric:
 
     _default = None
     _name = None
+    _decode = False
 
     @classmethod
     def _get_metric(cls, backend):
@@ -262,11 +267,14 @@ class BioMetric:
         metric_cls = cls._get_metric(backend)
         backend_cls = METRIC_BACKENDS[backend]
 
-        return backend_cls().create(
+        metric = backend_cls().create(
             metric_cls,
             *args,
             **kwargs,
         )
+
+        metric._decode = cls._decode
+        return metric
 
     @classmethod
     def name(cls):
@@ -296,26 +304,32 @@ class BioMetric:
 
 # %% ../nbs/060_metrics.ipynb #4960aa4d
 class MSEMetric(BioMetric):
+    _decode = False
     _default = mm.MSEMetric
 
 
 class SSIMMetric(BioMetric):
+    _decode = False
     _default = mm.SSIMMetric
 
 
 class PSNRMetric(BioMetric):
+    _decode = False
     _default = mm.PSNRMetric
 
 
 class MSSSIMMetric(BioMetric):
+    _decode = False
     _default = mm.MultiScaleSSIMMetric
 
 
 class MAEMetric(BioMetric):
+    _decode = False
     _default = mm.MAEMetric
 
 
 class RMSEMetric(BioMetric):
+    _decode = False
     _default = mm.RMSEMetric
 
 # %% ../nbs/060_metrics.ipynb #925bfd79
@@ -582,15 +596,19 @@ class DiceMetric(BioMetric):
     required by the fastai training loop.
     """
 
+    _decode = True
+
     _default = mm.DiceMetric
     _fastai = _FastaiDice
 
 # %% ../nbs/060_metrics.ipynb #37db4336
 class IoUMetric(BioMetric):
+    _decode = True
     _default = mm.MeanIoU
 
 # %% ../nbs/060_metrics.ipynb #fb8decf3
 class GeneralizedDiceScore(BioMetric):
+    _decode = True
     _default = mm.GeneralizedDiceScore
 
 # %% ../nbs/060_metrics.ipynb #7df2d770
@@ -606,8 +624,9 @@ class PanopticQualityMetric(BioMetric):
 
     All kwargs are forwarded to MONAI PanopticQualityMetric.
     """
-    _default = mm.PanopticQualityMetric
 
+    _decode = True
+    _default = mm.PanopticQualityMetric
 
 # %% ../nbs/060_metrics.ipynb #a7a5084f
 def _plain_tensor(x):
@@ -774,6 +793,8 @@ class AccuracyMetric(BioMetric):
     representation as the targets.
     """
 
+    _decode = True
+
     _default = _MonaiAccuracy
     _fastai = _FastaiAccuracy
 
@@ -786,26 +807,31 @@ def _monai_confusion_metric(metric_name):
 
 # %% ../nbs/060_metrics.ipynb #d7615ea1
 class F1ScoreMetric(BioMetric):
+    _decode = True
     _default = _monai_confusion_metric("f1 score")
     _fastai = fm.F1ScoreMulti
 
 
 class JaccardMetric(BioMetric):
+    _decode = True
     _default = _monai_confusion_metric("threat score")
     _fastai = fm.JaccardMulti
 
 
 class PrecisionMetric(BioMetric):
+    _decode = True
     _default = _monai_confusion_metric("precision")
     _fastai = fm.PrecisionMulti
 
 
 class RecallMetric(BioMetric):
+    _decode = True
     _default = _monai_confusion_metric("sensitivity")
     _fastai = fm.RecallMulti
 
 
 class MatthewsCorrCoefMetric(BioMetric):
+    _decode = True
     _default = _monai_confusion_metric(
         "matthews correlation coefficient"
     )
@@ -847,36 +873,45 @@ class ROCAUCMetric(BioMetric):
         metric = ROCAUCMetric()
 
     """
+
+    _decode = False
     _default = mm.ROCAUCMetric
     _fastai = fm.RocAuc
 
 # %% ../nbs/060_metrics.ipynb #06247a60
 class AveragePrecisionMetric(BioMetric):
+    _decode = False
     _default = mm.AveragePrecisionMetric
     _fastai = fm.APScoreMulti
 
 # %% ../nbs/060_metrics.ipynb #65149c1d
 class ConfusionMatrixMetric(BioMetric):
+    _decode = True
     _default = mm.ConfusionMatrixMetric
 
 # %% ../nbs/060_metrics.ipynb #06bef472
 class HausdorffDistanceMetric(BioMetric):
+    _decode = True
     _default = mm.HausdorffDistanceMetric
 
 # %% ../nbs/060_metrics.ipynb #a13fc7d6
 class SurfaceDistanceMetric(BioMetric):
+    _decode = True
     _default = mm.SurfaceDistanceMetric
 
 # %% ../nbs/060_metrics.ipynb #0481a590
 class SurfaceDiceMetric(BioMetric):
+    _decode = True
     _default = mm.SurfaceDiceMetric
 
 # %% ../nbs/060_metrics.ipynb #33fa9b46
 class FIDMetric(BioMetric):
+    _decode = False
     _default = mm.FIDMetric
 
 # %% ../nbs/060_metrics.ipynb #54b110e4
 class MMDMetric(BioMetric):
+    _decode = False
     _default = mm.MMDMetric
 
 # %% ../nbs/060_metrics.ipynb #bfad25b6
@@ -935,9 +970,10 @@ class MetricsReloadedBinary(BioMetric):
 
     """
 
+    _decode = True
+
     _default = mm.MetricsReloadedBinary
     _fastai = MetricsReloadedBinaryFastai
-
 
 # %% ../nbs/060_metrics.ipynb #218af239
 class MetricsReloadedCategorical(BioMetric):
@@ -955,6 +991,8 @@ class MetricsReloadedCategorical(BioMetric):
         metrics that depend on physical distances.
 
     """
+
+    _decode = True
 
     _default = mm.MetricsReloadedCategorical
 
@@ -1002,12 +1040,16 @@ class FRCMetric(BioMetric):
     The metric uses ``FRCLoss`` through MONAI's ``LossMetric`` wrapper.
     """
 
+    _decode = False
+
     _default = _FRCLossMetric
 
 # %% ../nbs/060_metrics.ipynb #ba352fcc
 class VarianceMetric(BioMetric):
+    _decode = False
     _default = mm.VarianceMetric
 
 # %% ../nbs/060_metrics.ipynb #4536906b
 class LabelQualityScore(BioMetric):
+    _decode = False
     _default = mm.LabelQualityScore
