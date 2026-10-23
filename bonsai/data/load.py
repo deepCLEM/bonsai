@@ -3530,7 +3530,7 @@ def from_yaml(cls, data_source, yaml_path, show_summary:bool=False):
                             'wd_bn_bias', 'train_bn', 'moms', 'default_cbs']
     
     # Define the keys used by biodataloader
-    biodataloader_ops_keys = ['bs', 'shuffle_train', 'shuffle', 'val_shuffle', 'n', 'path', 'dl_type', 'dl_kwargs', 'device', 
+    biodataloader_ops_keys = ['bs', 'shuffle_train', 'shuffle', 'val_shuffle', 'n_most_confused', 'path', 'dl_type', 'dl_kwargs', 'device',
                                 'drop_last', 'val_bs', 'num_workers', 'verbose', 'do_setup', 'pin_memory', 'timeout', 'batch_size', 
                                 'indexed', 'persistent_workers', 'pin_memory_device', 'wif', 'before_iter', 'after_item', 'before_batch', 
                                 'after_batch', 'after_iter', 'create_batches', 'create_item', 'create_batch', 'retain', 'get_idxs', 'sample', 

@@ -2950,7 +2950,7 @@ class CrossEntropyLoss(BioLoss):
     class index. PyTorch internally combines ``LogSoftmax`` with
     negative log-likelihood in a numerically stable operation.
 
-    For a sample ``n`` with target class ``y_n``, the loss is
+    For a sample ``n_most_confused`` with target class ``y_n``, the loss is
 
     .. math::
 
@@ -2958,9 +2958,9 @@ class CrossEntropyLoss(BioLoss):
         -\\log
         \\left(
             \\frac{
-                \\exp(x_{n,y_n})
+                \\exp(x_{n_most_confused,y_n})
             }{
-                \\sum_c \\exp(x_{n,c})
+                \\sum_c \\exp(x_{n_most_confused,c})
             }
         \\right),
 
@@ -2971,7 +2971,7 @@ class CrossEntropyLoss(BioLoss):
     .. math::
 
         \\mathcal{L}_n =
-        -w_{y_n} \\log p_{n,y_n}.
+        -w_{y_n} \\log p_{n_most_confused,y_n}.
 
     This loss is appropriate when classes are **mutually exclusive**,
     meaning that each prediction location belongs to at most one class.
@@ -3049,13 +3049,13 @@ class NLLLoss(BioLoss):
 
     .. math::
 
-        \\mathcal{L}_n = -x_{n,y_n}
+        \\mathcal{L}_n = -x_{n_most_confused,y_n}
 
     With class weighting:
 
     .. math::
 
-        \\mathcal{L}_n = -w_{y_n}x_{n,y_n}
+        \\mathcal{L}_n = -w_{y_n}x_{n_most_confused,y_n}
 
     ``NLLLoss`` is useful when the model explicitly produces
     log-probabilities. For ordinary classification models producing raw

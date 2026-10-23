@@ -25,6 +25,7 @@ import pandas as pd
 # Visualization
 # =================================
 import matplotlib.pyplot as plt
+plt.ion()
 from matplotlib.colors import LinearSegmentedColormap
 
 # =================================
@@ -1535,8 +1536,8 @@ def _plot_confusion_matrix(
     return ax
 
 
-def _most_confused(output, vocab=None, min_val=1, threshold=0.5):
-    """Return (actual, predicted, count) errors sorted by descending count."""
+def _most_confused(output, vocab=None, min_val=1, threshold=0.5, n_most_confused=5):
+    """Return up to n_most_confused errors by descending count; n_most_confused=None returns all qualifying pairs."""
     cm = _confusion_matrix(output, vocab, threshold)
     _, _, _, names = _classification_data(output, vocab, threshold)
     errors = [
@@ -1544,7 +1545,7 @@ def _most_confused(output, vocab=None, min_val=1, threshold=0.5):
         for i, j in np.ndindex(cm.shape)
         if i != j and cm[i, j] >= min_val
     ]
-    return sorted(errors, key=lambda item: item[2], reverse=True)
+    return sorted(errors, key=lambda item: item[2], reverse=True)[:n_most_confused]
 
 
 def _skm_classification_report(output, vocab=None, threshold=0.5, output_dict=False):
@@ -1557,14 +1558,14 @@ def _skm_classification_report(output, vocab=None, threshold=0.5, output_dict=Fa
     )
 
 
-def _classification_report(output, vocab=None, threshold=0.5, **plot_kwargs):
+def _classification_report(output, vocab=None, threshold=0.5, min_val=1, n_most_confused=5, **plot_kwargs):
     """Display all classification diagnostics and return their computed values."""
 
     from IPython.display import display
 
     cm = _confusion_matrix(output, vocab, threshold)
     _plot_confusion_matrix(output, vocab=vocab, threshold=threshold, **plot_kwargs)
-    confused = _most_confused(output, vocab=vocab, threshold=threshold)
+    confused = _most_confused(output, vocab=vocab, min_val=min_val, threshold=threshold, n_most_confused=n_most_confused)
     confused_df = pd.DataFrame(confused, columns=["Actual", "Predicted", "Count"])
     report = _skm_classification_report(
         output, vocab=vocab, threshold=threshold, output_dict=True,
@@ -1745,6 +1746,8 @@ def _fastai_evaluate(
         show_stats: bool = True,
         show_results: bool = True,
         classification_report: bool = False,
+        min_val: int = 1,
+        n_most_confused: int | None = 5,
         save_preds=None,
         save_targs=None,
         save_report=None,
@@ -1815,6 +1818,13 @@ def _fastai_evaluate(
     max_n : int, default=9
         Maximum samples in the separate show_results display. Does not
         limit evaluation or the number of returned samples.
+    min_val : int, default=1
+        Minimum count for a class pair in the most-confused table.
+        Used only when classification_report=True.
+    n_most_confused : int or None, default=5
+        Maximum class pairs in the most-confused table, sorted by descending
+        count. None includes all pairs meeting min_val. Used only when
+        classification_report=True; does not limit evaluated samples.
     classification_report : bool, default=False
         Show a confusion matrix, most-confused classes, and sklearn
         classification report. Adds computed diagnostics under
@@ -1918,6 +1928,7 @@ def _fastai_evaluate(
         result, (lambda: self.show_results(max_n=max_n)) if show_results else None,
         show_stats, classification_report, save_report,
         report_data=dict(result, preds=preds, targs=targs, cmap=cmap),
+        min_val=min_val, n_most_confused=n_most_confused,
     )
     return result
 
@@ -2369,6 +2380,8 @@ def _monai_evaluate(
         show_stats: bool = True,
         show_results: bool = True,
         classification_report: bool = False,
+        min_val: int = 1,
+        n_most_confused: int | None = 5,
         save_preds=None,
         save_targs=None,
         save_report=None,
@@ -2435,6 +2448,13 @@ def _monai_evaluate(
         first max_n evaluated samples even when with_input=False. Uses
         the validation set by default and honors an explicit dl or split;
         no additional inference pass is performed.
+    min_val : int, default=1
+        Minimum count for a class pair in the most-confused table.
+        Used only when classification_report=True.
+    n_most_confused : int or None, default=5
+        Maximum class pairs in the most-confused table, sorted by descending
+        count. None includes all pairs meeting min_val. Used only when
+        classification_report=True; does not limit evaluated samples.
     classification_report : bool, default=False
         Display a confusion matrix, most-confused classes, and a
         classification report. Include the computed diagnostics in the
@@ -2697,7 +2717,7 @@ def _monai_evaluate(
 
     _display_evaluation_outputs(
         result, preview, show_stats, classification_report, save_report,
-        vocab=vocab, threshold=threshold, cmap=cmap,
+        vocab=vocab, threshold=threshold, cmap=cmap, min_val=min_val, n_most_confused=n_most_confused,
     )
     return result
 
