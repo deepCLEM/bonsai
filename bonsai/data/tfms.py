@@ -445,6 +445,16 @@ def show_results(x: BioImageBase, y, samples, outs, ctxs=None, max_n=10,
     return ctxs
 
 
+@typedispatch
+def show_results(x: BioImageBase, y: TensorCategory, samples, outs, ctxs=None, max_n=10,
+                 nrows=None, ncols=None, figsize=None, vocab=None, **kwargs):
+    """Resolve the overlap with fastai's TensorImage/TensorCategory dispatch."""
+    return show_results.invoke(BioImageBase, object, object, object)(
+        x, y, samples, outs, ctxs=ctxs, max_n=max_n, nrows=nrows,
+        ncols=ncols, figsize=figsize, vocab=vocab, **kwargs,
+    )
+
+
 # %% ../../nbs/023_data.tfms.ipynb #96d2aa11
 @typedispatch
 def show_results(dl: torchDataLoader, batch: list | tuple, preds: torchTensor | np.ndarray | list,

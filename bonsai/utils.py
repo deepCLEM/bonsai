@@ -1019,22 +1019,27 @@ def apply_transforms(image, transforms):
     return image1, image2
 
 # %% ../nbs/000_utils.ipynb #540034f0e249fe27
-def compute_losses(predictions, targets, loss_fn):
-    """
-    Compute the loss for each prediction-target pair.
-    """
-    return [loss_fn(p.unsqueeze(0), t.unsqueeze(0)).item() for p, t in zip(predictions, targets)]
+def compute_losses(predictions, targets, loss_fn, batch_size=1):
+    """Compute one mean loss per batch; batch_size=1 preserves per-item results."""
+    return compute_metric(
+        predictions, targets, lambda p, t: loss_fn(p, t).mean(), batch_size=batch_size,
+    )
 
 
-def compute_metric(predictions, targets, metric_fn):
-    """
-    Compute the metric for each prediction-target pair.
-    Handles cases where metric_fn has or does not have a 'func' attribute.
-    """
-    # Get the actual function to call (either metric_fn.func or metric_fn itself)
-    metric_func = getattr(metric_fn, 'func', metric_fn)
-
-    return [metric_func(p.unsqueeze(0), t.unsqueeze(0)).item() for p, t in zip(predictions, targets)]
+def compute_metric(predictions, targets, metric_fn, batch_size=1):
+    """Compute one value per batch; batch_size=1 preserves per-item results."""
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int):
+        raise TypeError("batch_size must be a positive integer.")
+    if batch_size < 1:
+        raise ValueError("batch_size must be a positive integer.")
+    if len(predictions) != len(targets):
+        raise ValueError("Predictions and targets have different sample counts.")
+    metric_func = getattr(metric_fn, "func", metric_fn)
+    values = []
+    for i in range(0, len(predictions), batch_size):
+        value = metric_func(predictions[i:i+batch_size], targets[i:i+batch_size])
+        values.append(value.item() if hasattr(value, "item") else value)
+    return values
 
 
 def calculate_statistics(data):

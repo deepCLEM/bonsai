@@ -13,7 +13,7 @@ website:
       - 050_nets.ipynb
       - 060_metrics.ipynb
       - 070_optimizers.ipynb
-      - 080_engines.ipynb
+      - 080_engines.core.ipynb
       - 090_callbacks.ipynb
       - 100_inference.ipynb
       - 110_datasets.ipynb
