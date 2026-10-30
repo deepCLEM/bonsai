@@ -209,6 +209,9 @@ class BioMetric:
     _default : callable, optional
         Default metric implementation used when no backend-specific
         implementation is available.
+    _name : str, optional
+        Public name shared by backend instances; defaults to the class name
+        without a trailing ``Metric`` suffix.
     _decode : bool, default=False
         Whether the metric requires hard labels/masks rather than continuous
         predictions or scores. Also exposed on the instantiated backend metric.
@@ -273,6 +276,9 @@ class BioMetric:
             **kwargs,
         )
 
+        metric._name = cls.name()
+        if not isinstance(metric, Metric):
+            metric.name = metric._name
         metric._decode = cls._decode
         return metric
 
@@ -385,6 +391,10 @@ class _FastaiDice(Metric):
         self.num_classes = num_classes
         self.return_with_label = return_with_label
         self.reset()
+
+    @property
+    def name(self):
+        return getattr(self, "_name", super().name)
 
     def reset(self):
         self._values = []
@@ -724,6 +734,13 @@ class _MonaiAccuracy:
 
         return self.num_correct / self.num_examples
 
+    __call__ = update
+    aggregate = compute
+
+    def get_buffer(self):
+        """Accuracy tracks totals only; per-image details are unavailable."""
+        return None
+
     @property
     def value(self):
         return self.compute()
@@ -741,6 +758,10 @@ class _FastaiAccuracy(Metric):
         self.axis = axis
         self.is_multilabel = is_multilabel
         self.reset()
+
+    @property
+    def name(self):
+        return getattr(self, "_name", super().name)
 
     def reset(self):
         self.num_correct = 0
@@ -794,6 +815,7 @@ class AccuracyMetric(BioMetric):
     """
 
     _decode = True
+    _name = "Accuracy"
 
     _default = _MonaiAccuracy
     _fastai = _FastaiAccuracy

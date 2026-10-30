@@ -349,6 +349,14 @@ def _fastai_evaluate(
                     result["losses"].extend(
                         compute_losses(pred, target, self.trainer.loss_func, batch_size=len(target))
                     )
+                # for name, metric in metric_fns.items():
+                #     result["metrics"][name].extend(
+                #         compute_metric(
+                #             pred, target,
+                #             metric,
+                #             batch_size=len(target),
+                #         )
+                #     )
                 for name, metric in metric_fns.items():
                     result["metrics"][name].extend(
                         compute_metric(
@@ -357,6 +365,7 @@ def _fastai_evaluate(
                             batch_size=len(target),
                         )
                     )
+                #     print(result["metrics"])
 
     prediction_cbs = L(cbs)
     if with_loss or with_metrics:
@@ -388,8 +397,17 @@ def _fastai_evaluate(
         result["targs"] = targs
     if with_decoded and preds is not None:
         result["decoded"] = next(values)
+    def preview():
+        # A display batch may omit classes required by validation metrics.
+        saved_metrics = self.trainer.metrics
+        try:
+            self.trainer.metrics = []
+            self.show_results(max_n=max_n)
+        finally:
+            self.trainer.metrics = saved_metrics
+
     _display_evaluation_outputs(
-        result, (lambda: self.show_results(max_n=max_n)) if show_results else None,
+        result, preview if show_results else None,
         show_stats, classification_report, save_report,
         report_data=dict(result, preds=preds, targs=targs), cmap=cmap,
         min_val=min_val, n_most_confused=n_most_confused,

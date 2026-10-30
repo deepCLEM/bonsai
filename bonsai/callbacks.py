@@ -53,8 +53,7 @@ from ignite.engine import Engine, Events
 # ---------------------------------------------------------------------
 from .backend import get_backend
 from .utils import *
-from .visualize import bonsai_style
-
+from .visualize import bonsai_style, colorlist
 
 # %% ../nbs/090_callbacks.ipynb #703f9a6d
 class BioCallback:
@@ -410,7 +409,7 @@ class MeanLossGraphCallback(FastaiCallback):
             ax.set_ylabel(name)
             ax.set_xlabel("Epoch")
             ax.grid(True)
-            ax.legend()
+            ax.legend(handles=[line], labels=[name])
 
         self._graph_initialized = True
         self.graph_out = display(self.graph_fig, display_id=True)
@@ -1364,10 +1363,10 @@ class StatsHandler:
             # Loss subplot
             ax = self._graph_axes[0]
             self._train_loss_line, = ax.plot(
-                [], [], marker="o", linestyle="--", label="train_loss"
+                [], [], marker="o", linestyle="--", color=colorlist[1], label="train_loss"
             )
             self._valid_loss_line, = ax.plot(
-                [], [], marker="o", label="val_loss"
+                [], [], marker="o", color=colorlist[0], label="val_loss"
             )
 
             ax.set_title("Loss")
@@ -1384,11 +1383,11 @@ class StatsHandler:
 
                 train_line, = ax.plot(
                     [], [], marker="o", linestyle="--",
-                    label=f"train_{name}",
+                    color=colorlist[1], label=f"train_{name}",
                 )
                 val_line, = ax.plot(
                     [], [], marker="o",
-                    label=f"val_{name}",
+                    color=colorlist[0], label=f"val_{name}",
                 )
 
                 self._metric_lines[name] = {

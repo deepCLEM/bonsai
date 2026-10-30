@@ -214,12 +214,18 @@ def _monai_evaluator_metrics(evaluator):
 
 def _monai_evaluation_metric_value(metric, pred, target, output=None, loss_fn=None):
     """Evaluate one batch using the MONAI or Ignite metric lifecycle."""
+    from types import SimpleNamespace
     from ignite.metrics import Metric as IgniteMetric
     from monai.metrics.metric import CumulativeIterationMetric
 
     with torch.no_grad():
         if isinstance(metric, IgniteMetric):
             metric.reset()
+            if isinstance(metric, IgniteMetricHandler):
+                # Use Ignite's normal decollated-output unrolling before update.
+                batch_output = output if output is not None else (pred, target)
+                metric.iteration_completed(SimpleNamespace(state=SimpleNamespace(output=batch_output)))
+                return _evaluation_detach(metric.compute())
             prepared = metric._output_transform(output if output is not None else (pred, target))
             if loss_fn is not None and isinstance(getattr(metric, "_decode", None), bool):
                 p, y = prepared
